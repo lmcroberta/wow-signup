@@ -6,7 +6,7 @@ WORKDIR /app
 
 # Only the three files the app actually needs at runtime.
 # selftest.js is included on purpose: it is the smoke test you run inside the container.
-COPY server.js check-db.js selftest.js ./
+COPY server.js check-db.js selftest.js pandaria-background.jpg ./
 
 # Runs as the unprivileged user that node:20-alpine already ships.
 USER node

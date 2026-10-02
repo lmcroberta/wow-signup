@@ -33,6 +33,10 @@
 const http = require('node:http');
 const crypto = require('node:crypto');
 const net = require('node:net');
+const fs = require('node:fs');
+const path = require('node:path');
+
+const BACKGROUND_PATH = path.join(__dirname, 'pandaria-background.jpg');
 
 // ---------------------------------------------------------------------------
 // Minimal MySQL client (zero dependencies). Speaks enough of the wire protocol
@@ -478,11 +482,15 @@ function renderForm({ errors = [], values = {}, notice = '' } = {}) {
 <style>
   :root { color-scheme: dark; }
   * { box-sizing: border-box; }
-  body { margin:0; min-height:100vh; display:grid; place-items:center;
-         background:#14110d; color:#e8e0d0;
-         font:16px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif; padding:24px; }
-  .card { width:100%; max-width:420px; background:#1e1a15; border:1px solid #3a3128;
-          border-radius:12px; padding:28px; box-shadow:0 12px 40px #0008; }
+  body { margin:0; min-height:100dvh; display:grid; place-items:center;
+         background:#14110d url('/pandaria-background.jpg') center center / cover fixed no-repeat;
+         color:#f2eadc; font:16px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
+         padding:24px; position:relative; isolation:isolate; }
+  body::before { content:''; position:fixed; inset:0; z-index:-1;
+                 background:linear-gradient(120deg,rgba(5,12,15,.72),rgba(10,18,16,.47) 48%,rgba(8,10,12,.70)); }
+  .card { width:100%; max-width:420px; background:rgba(25,22,17,.91); border:1px solid rgba(211,177,99,.36);
+          border-radius:14px; padding:28px; box-shadow:0 18px 55px #000b;
+          backdrop-filter:blur(8px); -webkit-backdrop-filter:blur(8px); }
   h1 { margin:0 0 4px; font-size:22px; letter-spacing:.3px; }
   .sub { margin:0 0 18px; color:#9a8f7d; font-size:13px; }
   .realm { margin:0 0 18px; padding:10px 12px; background:#241f19; border-radius:8px;
@@ -534,10 +542,15 @@ function renderDone(username) {
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Account created</title>
 <style>
-  body { margin:0; min-height:100vh; display:grid; place-items:center; background:#14110d;
-         color:#e8e0d0; font:16px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif; padding:24px; }
-  .card { width:100%; max-width:420px; background:#1e1a15; border:1px solid #3a3128;
-          border-radius:12px; padding:28px; text-align:center; }
+  body { margin:0; min-height:100dvh; display:grid; place-items:center;
+         background:#14110d url('/pandaria-background.jpg') center center / cover fixed no-repeat;
+         color:#f2eadc; font:16px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
+         padding:24px; position:relative; isolation:isolate; }
+  body::before { content:''; position:fixed; inset:0; z-index:-1;
+                 background:linear-gradient(120deg,rgba(5,12,15,.72),rgba(10,18,16,.47) 48%,rgba(8,10,12,.70)); }
+  .card { width:100%; max-width:420px; background:rgba(25,22,17,.91); border:1px solid rgba(211,177,99,.36);
+          border-radius:14px; padding:28px; text-align:center; box-shadow:0 18px 55px #000b;
+          backdrop-filter:blur(8px); -webkit-backdrop-filter:blur(8px); }
   h1 { margin:0 0 10px; font-size:22px; color:#8fd89a; }
   code { background:#14110d; padding:3px 7px; border-radius:5px; color:#c8a04a; }
   a { display:inline-block; margin-top:20px; color:#c8a04a; }
@@ -674,6 +687,15 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'GET' && url.pathname === '/') {
     const r = page(renderForm());
     res.writeHead(r.status, r.headers); res.end(r.body); return;
+  }
+
+  if (req.method === 'GET' && url.pathname === '/pandaria-background.jpg') {
+    fs.readFile(BACKGROUND_PATH, (err, image) => {
+      if (err) { res.writeHead(404, { 'Content-Type': 'text/plain' }); res.end('Not found'); return; }
+      res.writeHead(200, { 'Content-Type': 'image/jpeg', 'Cache-Control': 'public, max-age=86400' });
+      res.end(image);
+    });
+    return;
   }
 
   if (req.method === 'GET' && url.pathname === '/health') {
