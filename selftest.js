@@ -12,7 +12,10 @@
 'use strict';
 
 const assert = require('node:assert');
-const { shaPassHash, normalize, validate, validateNewPassword, ResetTokenStore, MAX_USERNAME } = require('./server.js');
+const {
+  shaPassHash, normalize, validate, validateNewPassword, ResetTokenStore,
+  RealmStatusMonitor, renderForm, MAX_USERNAME,
+} = require('./server.js');
 
 let pass = 0;
 let fail = 0;
@@ -164,6 +167,54 @@ check('new-password validation enforces password rules and confirmation', () => 
   assert.ok(validateNewPassword('abc', 'abc').length > 0);
   assert.ok(validateNewPassword('hunter2', 'hunter3').length > 0);
   assert.deepStrictEqual(validateNewPassword('hunter2', 'hunter2'), []);
+});
+
+// ---------------------------------------------------------------------------
+// 6. Realm status classification and page wiring.
+// ---------------------------------------------------------------------------
+function monitor() {
+  return new RealmStatusMonitor({
+    host: 'realm.test',
+    startingWindowMs: 600000,
+    probe: async () => false,
+    clock: () => 1000,
+  });
+}
+
+check('realm status is online only when the game port answers', () => {
+  const m = monitor();
+  assert.strictEqual(m.classify(true, true, 1000), 'online');
+});
+
+check('realm status is offline when both game and auth ports are closed', () => {
+  const m = monitor();
+  assert.strictEqual(m.classify(false, false, 1000), 'offline');
+});
+
+check('realm status is starting after auth appears but before game port opens', () => {
+  const m = monitor();
+  assert.strictEqual(m.classify(false, false, 1000), 'offline');
+  assert.strictEqual(m.classify(false, true, 2000), 'starting');
+});
+
+check('starting state expires instead of staying yellow forever', () => {
+  const m = monitor();
+  m.classify(false, false, 1000);
+  assert.strictEqual(m.classify(false, true, 2000), 'starting');
+  assert.strictEqual(m.classify(false, true, 602001), 'offline');
+});
+
+check('a previously online realm becomes offline, not starting, when game port drops', () => {
+  const m = monitor();
+  assert.strictEqual(m.classify(true, true, 1000), 'online');
+  assert.strictEqual(m.classify(false, true, 2000), 'offline');
+});
+
+check('signup page contains the live three-state status badge and endpoint', () => {
+  const html = renderForm();
+  assert.match(html, /id="realm-status"/);
+  assert.match(html, /\/realm-status/);
+  assert.match(html, /online.*starting.*offline/);
 });
 
 // ---------------------------------------------------------------------------

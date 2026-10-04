@@ -403,7 +403,136 @@ const CFG = {
   publicBaseUrl: (process.env.PUBLIC_BASE_URL || '').replace(/\/$/, ''),
   resetTokenTtlMinutes: parseInt(process.env.RESET_TOKEN_TTL_MINUTES || '30', 10),
   recoveryMaxPerIpPerHour: parseInt(process.env.RECOVERY_MAX_PER_IP_PER_HOUR || '5', 10),
+  realmStatusHost: process.env.REALM_STATUS_HOST || process.env.DB_HOST || '127.0.0.1',
+  realmGamePort: parseInt(process.env.REALM_GAME_PORT || '8085', 10),
+  realmAuthPort: parseInt(process.env.REALM_AUTH_PORT || '3724', 10),
+  realmStatusTimeoutMs: parseInt(process.env.REALM_STATUS_TIMEOUT_MS || '1200', 10),
+  realmStatusPollMs: parseInt(process.env.REALM_STATUS_POLL_MS || '5000', 10),
+  realmStartingWindowMs: parseInt(process.env.REALM_STARTING_WINDOW_MS || '600000', 10),
 };
+
+// ---------------------------------------------------------------------------
+// Realm status monitor.
+//
+// ONLINE means the WorldServer game port accepts a TCP connection.
+// STARTING means authserver has just appeared after being offline while the
+// game port is not ready yet. If WorldServer was online and disappears while
+// authserver stays up, that is OFFLINE, not a false "starting" state.
+// ---------------------------------------------------------------------------
+function tcpPortOpen(host, port, timeoutMs = 1200) {
+  return new Promise((resolve) => {
+    const socket = net.createConnection({ host, port });
+    let settled = false;
+    const finish = (open) => {
+      if (settled) return;
+      settled = true;
+      socket.destroy();
+      resolve(open);
+    };
+    socket.setTimeout(timeoutMs);
+    socket.once('connect', () => finish(true));
+    socket.once('timeout', () => finish(false));
+    socket.once('error', () => finish(false));
+  });
+}
+
+class RealmStatusMonitor {
+  constructor({
+    host,
+    gamePort = 8085,
+    authPort = 3724,
+    timeoutMs = 1200,
+    pollMs = 5000,
+    startingWindowMs = 600000,
+    probe = tcpPortOpen,
+    clock = () => Date.now(),
+  }) {
+    this.host = host;
+    this.gamePort = gamePort;
+    this.authPort = authPort;
+    this.timeoutMs = timeoutMs;
+    this.pollMs = pollMs;
+    this.startingWindowMs = startingWindowMs;
+    this.probe = probe;
+    this.clock = clock;
+    this.authWasOpen = null;
+    this.sawGameOnline = false;
+    this.startingSince = null;
+    this.timer = null;
+    this.inFlight = null;
+    this.snapshot = { status: 'checking', label: 'Checking realm...', checkedAt: null };
+  }
+
+  classify(gameOpen, authOpen, now = this.clock()) {
+    if (gameOpen) {
+      this.sawGameOnline = true;
+      this.authWasOpen = authOpen;
+      this.startingSince = null;
+      return 'online';
+    }
+
+    if (this.sawGameOnline) {
+      this.sawGameOnline = false;
+      this.authWasOpen = authOpen;
+      this.startingSince = null;
+      return 'offline';
+    }
+
+    if (!authOpen) {
+      this.authWasOpen = false;
+      this.startingSince = null;
+      return 'offline';
+    }
+
+    if (this.authWasOpen === false) this.startingSince = now;
+    this.authWasOpen = true;
+    if (this.startingSince !== null && now - this.startingSince <= this.startingWindowMs) return 'starting';
+    return 'offline';
+  }
+
+  async sample() {
+    if (this.inFlight) return this.inFlight;
+    this.inFlight = (async () => {
+      const [gameOpen, authOpen] = await Promise.all([
+        this.probe(this.host, this.gamePort, this.timeoutMs),
+        this.probe(this.host, this.authPort, this.timeoutMs),
+      ]);
+      const now = this.clock();
+      const status = this.classify(gameOpen, authOpen, now);
+      const labels = { online: 'Online', starting: 'Starting up', offline: 'Offline' };
+      this.snapshot = { status, label: labels[status], checkedAt: new Date(now).toISOString() };
+      return this.snapshot;
+    })().finally(() => { this.inFlight = null; });
+    return this.inFlight;
+  }
+
+  async refreshIfStale() {
+    const checked = this.snapshot.checkedAt ? Date.parse(this.snapshot.checkedAt) : 0;
+    if (!checked || this.clock() - checked >= this.pollMs) return this.sample();
+    return this.snapshot;
+  }
+
+  start() {
+    if (this.timer) return;
+    void this.sample();
+    this.timer = setInterval(() => { void this.sample(); }, this.pollMs);
+    if (this.timer.unref) this.timer.unref();
+  }
+
+  stop() {
+    if (this.timer) clearInterval(this.timer);
+    this.timer = null;
+  }
+}
+
+const realmStatus = new RealmStatusMonitor({
+  host: CFG.realmStatusHost,
+  gamePort: CFG.realmGamePort,
+  authPort: CFG.realmAuthPort,
+  timeoutMs: CFG.realmStatusTimeoutMs,
+  pollMs: CFG.realmStatusPollMs,
+  startingWindowMs: CFG.realmStartingWindowMs,
+});
 
 // ---------------------------------------------------------------------------
 // The part that actually matters: TrinityCore's password hash.
@@ -546,8 +675,23 @@ function renderForm({ errors = [], values = {}, notice = '' } = {}) {
           backdrop-filter:blur(8px); -webkit-backdrop-filter:blur(8px); }
   h1 { margin:0 0 4px; font-size:22px; letter-spacing:.3px; }
   .sub { margin:0 0 18px; color:#9a8f7d; font-size:13px; }
-  .realm { margin:0 0 18px; padding:10px 12px; background:#241f19; border-radius:8px;
+  .realm { margin:0 0 10px; padding:10px 12px; background:#241f19; border-radius:8px;
            font-size:13px; color:#bdb2a0; }
+  .realm-status { display:flex; align-items:center; justify-content:space-between; gap:12px;
+                  margin:0 0 18px; padding:10px 12px; background:#241f19; border-radius:8px;
+                  border:1px solid #3a3128; font-size:13px; color:#bdb2a0; }
+  .realm-status strong { display:inline-flex; align-items:center; gap:7px; color:#d2c7b5; }
+  .realm-status strong::before { content:''; width:10px; height:10px; border-radius:50%;
+                                 background:#78736c; box-shadow:0 0 0 3px #78736c22; }
+  .realm-status.online strong { color:#bff0c7; }
+  .realm-status.online strong::before { background:#46c66a; box-shadow:0 0 0 3px #46c66a2e,0 0 12px #46c66a88; }
+  .realm-status.starting strong { color:#f0d59a; }
+  .realm-status.starting strong::before { background:#dcae45; box-shadow:0 0 0 3px #dcae452e,0 0 12px #dcae4588;
+                                          animation:pulse 1.2s ease-in-out infinite; }
+  .realm-status.offline strong { color:#efb5b5; }
+  .realm-status.offline strong::before { background:#d45757; box-shadow:0 0 0 3px #d457572e; }
+  @keyframes pulse { 50% { opacity:.38; transform:scale(.82); } }
+  @media (prefers-reduced-motion:reduce) { .realm-status.starting strong::before { animation:none; } }
   label { display:block; font-size:13px; color:#bdb2a0; margin:14px 0 5px; }
   input { width:100%; padding:11px 12px; background:#14110d; color:#e8e0d0;
           border:1px solid #3a3128; border-radius:8px; font-size:15px; }
@@ -566,6 +710,9 @@ function renderForm({ errors = [], values = {}, notice = '' } = {}) {
   <h1>Create your account</h1>
   <p class="sub">Sign up and log straight in. No approval needed.</p>
   ${realmLine}
+  <div id="realm-status" class="realm-status checking" role="status" aria-live="polite">
+    <span>Realm status</span><strong id="realm-status-label">Checking...</strong>
+  </div>
   ${noticeBox}
   ${errBox}
   <form method="POST" action="/signup" autocomplete="off">
@@ -586,7 +733,28 @@ function renderForm({ errors = [], values = {}, notice = '' } = {}) {
     <button type="submit">Create account</button>
   </form>
   <div class="foot">Use the same username and password in the game client.<br><a href="/forgot-password" style="color:#c8a04a">Forgot your password?</a></div>
-</div></body></html>`;
+</div>
+<script>
+(() => {
+  const box = document.getElementById('realm-status');
+  const label = document.getElementById('realm-status-label');
+  async function updateRealmStatus() {
+    try {
+      const response = await fetch('/realm-status', { cache: 'no-store' });
+      if (!response.ok) throw new Error('status request failed');
+      const data = await response.json();
+      const state = ['online', 'starting', 'offline'].includes(data.status) ? data.status : 'offline';
+      box.className = 'realm-status ' + state;
+      label.textContent = data.label || (state === 'online' ? 'Online' : state === 'starting' ? 'Starting up' : 'Offline');
+    } catch {
+      box.className = 'realm-status offline';
+      label.textContent = 'Offline';
+    }
+  }
+  updateRealmStatus();
+  setInterval(updateRealmStatus, 10000);
+})();
+</script></body></html>`;
 }
 
 function recoveryShell(title, body) {
@@ -831,6 +999,12 @@ const server = http.createServer(async (req, res) => {
     res.end(JSON.stringify({ ok: true })); return;
   }
 
+  if (req.method === 'GET' && url.pathname === '/realm-status') {
+    const snapshot = await realmStatus.refreshIfStale();
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+    res.end(JSON.stringify(snapshot)); return;
+  }
+
   if (req.method === 'GET' && url.pathname === '/forgot-password') {
     const r = page(renderForgot()); res.writeHead(r.status, r.headers); res.end(r.body); return;
   }
@@ -963,6 +1137,7 @@ if (require.main === module) {
       console.error('preflight failed:', e.message);
       process.exit(1);
     }
+    realmStatus.start();
     server.listen(CFG.listenPort, () => {
       console.log(`wow-signup listening on :${CFG.listenPort}`);
       console.log(`  auth db  : ${CFG.dbUser}@${CFG.dbHost}:${CFG.dbPort}/${CFG.dbName}`);
@@ -971,4 +1146,4 @@ if (require.main === module) {
   })();
 }
 
-module.exports = { shaPassHash, normalize, validate, validateNewPassword, ResetTokenStore, MAX_USERNAME };
+module.exports = { shaPassHash, normalize, validate, validateNewPassword, ResetTokenStore, RealmStatusMonitor, renderForm, MAX_USERNAME };

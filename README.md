@@ -55,6 +55,11 @@ silent, confusing failure:
 | `v` / `s` are `NOT NULL DEFAULT ''` | NULL in either breaks login | Sets `''` when the columns exist; omitted when they don't |
 | `realmlist.name` is **UNIQUE** | A page that lets people type a realm name collides on the 2nd signup | Realm name is read-only, display only |
 
+The signup page also shows a live realm indicator. It checks the WorldServer game port directly:
+**green Online** when that port answers, **yellow Starting up** after AuthServer appears while
+WorldServer is still loading, and **red Offline** otherwise. A stopped or crashed WorldServer is
+never mislabeled as healthy just because the web page or database is still running.
+
 The page also **probes the live `account` table on boot** and refuses to start if a column
 the login path needs is missing. That is deliberate: Robert's repack dropped the PRIMARY
 KEY on `characters.corpse`, which proves the shipped schema is **not** what he runs. This
@@ -93,6 +98,12 @@ Environment variables:
 | `PUBLIC_BASE_URL` | *(required for recovery)* | Public site root, for example `https://mop.example.com` |
 | `RESET_TOKEN_TTL_MINUTES` | `30` | Reset-link lifetime |
 | `RECOVERY_MAX_PER_IP_PER_HOUR` | `5` | Recovery request rate limit |
+| `REALM_STATUS_HOST` | `DB_HOST` | WoW server address checked by the status badge |
+| `REALM_GAME_PORT` | `8085` | WorldServer game port; open means Online |
+| `REALM_AUTH_PORT` | `3724` | AuthServer port; used to recognize startup |
+| `REALM_STATUS_TIMEOUT_MS` | `1200` | Timeout for each TCP check |
+| `REALM_STATUS_POLL_MS` | `5000` | Server-side check interval |
+| `REALM_STARTING_WINDOW_MS` | `600000` | Maximum Starting up window after AuthServer appears |
 
 ```bash
 node selftest.js      # prove the hash is right, no DB needed
