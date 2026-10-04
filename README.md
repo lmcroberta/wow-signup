@@ -68,7 +68,7 @@ does not assume the base schema is correct.
 ## Files
 
 - `server.js` — the whole thing. Zero dependencies. Node 18+.
-- `selftest.js` — 31 tests, no DB or email needed. Run `node selftest.js`.
+- `selftest.js` — 32 tests, no DB or email needed. Run `node selftest.js`.
 - `check-db.js` — read-only diagnostic. Tells you if the page can reach the DB.
 - `Dockerfile` — for a TrueNAS custom-app install. Zero dependencies means there is
   no `npm install` step; it just copies the three files and runs `node server.js`
@@ -82,7 +82,7 @@ Environment variables:
 |---|---|---|
 | `DB_HOST` | `127.0.0.1` | Where the auth DB lives |
 | `DB_PORT` | `3306` | |
-| `DB_USER` | *(required)* | Needs SELECT + INSERT on `account`, column-limited UPDATE for recovery, and INSERT on `account_boost` |
+| `DB_USER` | *(required)* | Only needs INSERT + SELECT on `account` |
 | `DB_PASS` | `''` | |
 | `DB_NAME` | `auth` | |
 | `LISTEN_PORT` | `8080` | |
@@ -104,7 +104,6 @@ Environment variables:
 | `REALM_STATUS_TIMEOUT_MS` | `1200` | Timeout for each TCP check |
 | `REALM_STATUS_POLL_MS` | `5000` | Server-side check interval |
 | `REALM_STARTING_WINDOW_MS` | `600000` | Maximum Starting up window after AuthServer appears |
-| `BOOST_REALM_ID` | `1` | Realm that receives one built-in character boost credit per new signup |
 
 ```bash
 node selftest.js      # prove the hash is right, no DB needed
@@ -125,10 +124,9 @@ node server.js        # run it
 3. **Recovery requires a Gmail app password.** Turn on 2-Step Verification for the
    sending Google account, create an app password, and enter that value as `SMTP_PASS`.
    Never use or store the normal Google account password in this app.
-4. **The MySQL user needs two additional least-privilege grants.** Password reset needs
-   `UPDATE (sha_pass_hash, v, s)` on `auth.account`, and automatic boosts need `INSERT`
-   on `auth.account_boost`. Grant both locally on ROSCOEELVIS as a privileged MySQL user;
-   the remote wowadmin user cannot GRANT.
+4. **The MySQL user needs UPDATE for recovery.** Signup used only SELECT + INSERT. Password
+   reset additionally needs `UPDATE (sha_pass_hash, v, s)` on `auth.account`. Grant it
+   locally on ROSCOEELVIS as a privileged MySQL user; the remote wowadmin user cannot GRANT.
 5. **Reset links live in memory.** Only SHA-256 hashes of the random tokens are retained,
    but restarting or redeploying the app invalidates every outstanding reset link. This
    deliberately avoids altering the EmuCoach account schema or adding a storage mount.

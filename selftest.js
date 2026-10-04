@@ -14,7 +14,7 @@
 const assert = require('node:assert');
 const {
   shaPassHash, normalize, validate, validateNewPassword, ResetTokenStore,
-  RealmStatusMonitor, renderForm, renderAddons, renderDone, boostGrantSql, MAX_USERNAME,
+  RealmStatusMonitor, renderForm, MAX_USERNAME, resolveExpansion,
 } = require('./server.js');
 
 let pass = 0;
@@ -218,46 +218,40 @@ check('signup page contains the live three-state status badge and endpoint', () 
 });
 
 // ---------------------------------------------------------------------------
-// 7. One built-in character boost per new account.
+// 7. account.expansion — the silent killer.
+//
+// MoP needs 5; the schema default is 4. If the app writes 4 the account is
+// created, the page says "welcome", and login fails with nothing in any log.
+// These tests exist because the 8 PM offline test writes its OWN throwaway row
+// with a hardcoded 5 — so it validates the database, not this code path. A
+// wrong ACCOUNT_EXPANSION would pass that test and still break every real
+// signup.
 // ---------------------------------------------------------------------------
-check('boost grant creates exactly one credit for the configured realm', () => {
-  assert.strictEqual(
-    boostGrantSql(42, 1),
-    'INSERT INTO account_boost (id, realmid, counter) VALUES (42, 1, 1)'
-  );
+check('expansion defaults to 5 (MoP), not the schema default of 4', () => {
+  assert.strictEqual(resolveExpansion(undefined), 5);
+  assert.strictEqual(resolveExpansion(null), 5);
+  assert.strictEqual(resolveExpansion(''), 5);
 });
 
-check('boost grant rejects invalid account and realm identifiers', () => {
-  assert.throws(() => boostGrantSql(0, 1), /Invalid account id/);
-  assert.throws(() => boostGrantSql(42, 0), /Invalid realm id/);
+check('an explicit valid expansion is honoured', () => {
+  assert.strictEqual(resolveExpansion('5'), 5);
+  assert.strictEqual(resolveExpansion('  5  '), 5);
 });
 
-check('success page tells the player about the free level-90 boost', () => {
-  assert.match(renderDone('WILLA'), /one free level-90 character boost/i);
+check('garbage in the env var falls back to 5 instead of poisoning the INSERT', () => {
+  assert.strictEqual(resolveExpansion('4abc'), 5);
+  assert.strictEqual(resolveExpansion('NaN'), 5);
+  assert.strictEqual(resolveExpansion('2.5'), 5);
+  assert.strictEqual(resolveExpansion('-1'), 5);
+  assert.strictEqual(resolveExpansion('0'), 5);
+  assert.strictEqual(resolveExpansion('5\n'), 5);
 });
 
-// ---------------------------------------------------------------------------
-// 8. Public original-MoP addon downloads.
-// ---------------------------------------------------------------------------
-check('signup and success pages link to the Addons page', () => {
-  assert.match(renderForm(), /href="\/addons"/);
-  assert.match(renderDone('WILLA'), /href="\/addons"/);
-});
-
-check('Addons page pins all twelve verified downloads', () => {
-  const html = renderAddons();
-  assert.strictEqual((html.match(/class="download"/g) || []).length, 12);
-  for (const id of ['738655', '732249', '732247', '732250', '732248', '732255', '732252', '732251', '732254', '763857', '792691', '778/516']) {
-    assert.ok(html.includes(id), `missing verified download ${id}`);
+check('the value handed to the INSERT is always a positive integer', () => {
+  for (const raw of [undefined, '', '5', '4abc', 'NaN', '0', '-3', '2.5', '999999999999999999999']) {
+    const v = resolveExpansion(raw);
+    assert.ok(Number.isInteger(v) && v >= 1, `${JSON.stringify(raw)} produced ${v}`);
   }
-});
-
-check('Addons page warns against modern MoP Classic and gives install steps', () => {
-  const html = renderAddons();
-  assert.match(html, /Do not install current.*MoP Classic/i);
-  assert.ok(html.includes('World of Warcraft\\Interface\\AddOns'));
-  assert.match(html, /Pandaria dungeon and raid maps are already included in Atlas Core/i);
-  assert.match(html, /Interface 50400/);
 });
 
 // ---------------------------------------------------------------------------

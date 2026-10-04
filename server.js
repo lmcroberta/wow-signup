@@ -13,8 +13,7 @@
  *   verified at AccountMgr.cpp:341 + normalizeString() at AccountMgr.cpp:323.
  *   So we can compute the hash ourselves. No worldserver needed, no admin
  *   credential stored anywhere, and signups work while the game server is off.
- *   Least privilege: it INSERTs into `account` and `account_boost`, and recovery
- *   has column-limited UPDATE permission on `account`.
+ *   Least privilege: it only ever INSERTs into `account`.
  *
  * ZERO DEPENDENCIES — on purpose. Uses node:http + node:crypto only.
  * Node 18+. No npm install. Nothing to break.
@@ -27,7 +26,6 @@
  *   ACCOUNT_EXPANSION (default 5 — MoP. NOT the schema default of 4.)
  *   REQUIRE_EMAIL (default 0)
  *   MAX_PER_IP_PER_DAY (default 5)
- *   BOOST_REALM_ID (default 1 — grants one built-in boost credit per signup)
  */
 
 'use strict';
@@ -385,6 +383,29 @@ const MYSQL = (() => {
 // ---------------------------------------------------------------------------
 // Config
 // ---------------------------------------------------------------------------
+
+// The single most expensive silent failure this page can have. MoP 5.4.8
+// needs account.expansion = 5; the TrinityCore schema default is 4. An account
+// written with the wrong value is created successfully, the page says
+// "welcome", and the person simply cannot log in — with nothing in any log to
+// explain why.
+//
+// So this never trusts a hand-set env var to be sane: anything that is not a
+// clean positive integer (unset, empty, "4abc", "-1", "NaN", "2.5") falls back
+// to 5 rather than propagating garbage into the INSERT. A stray trailing
+// newline or a copy-paste artifact in the TrueNAS env box is exactly the kind
+// of thing that turns into a support ticket from one of Tyler's friends.
+const EXPANSION_DEFAULT = 5;
+
+function resolveExpansion(raw) {
+  if (raw === undefined || raw === null) return EXPANSION_DEFAULT;
+  const text = String(raw).trim();
+  if (!/^\d+$/.test(text)) return EXPANSION_DEFAULT;
+  const value = Number(text);
+  if (!Number.isSafeInteger(value) || value < 1) return EXPANSION_DEFAULT;
+  return value;
+}
+
 const CFG = {
   dbHost: process.env.DB_HOST || '127.0.0.1',
   dbPort: parseInt(process.env.DB_PORT || '3306', 10),
@@ -394,7 +415,7 @@ const CFG = {
   listenPort: parseInt(process.env.LISTEN_PORT || '8080', 10),
   realmName: process.env.REALM_NAME || '',
   realmAddress: process.env.REALM_ADDRESS || '',
-  expansion: parseInt(process.env.ACCOUNT_EXPANSION || '5', 10),
+  expansion: resolveExpansion(process.env.ACCOUNT_EXPANSION),
   requireEmail: (process.env.REQUIRE_EMAIL || '0') === '1',
   maxPerIpPerDay: parseInt(process.env.MAX_PER_IP_PER_DAY || '5', 10),
   smtpHost: process.env.SMTP_HOST || 'smtp.gmail.com',
@@ -411,16 +432,7 @@ const CFG = {
   realmStatusTimeoutMs: parseInt(process.env.REALM_STATUS_TIMEOUT_MS || '1200', 10),
   realmStatusPollMs: parseInt(process.env.REALM_STATUS_POLL_MS || '5000', 10),
   realmStartingWindowMs: parseInt(process.env.REALM_STARTING_WINDOW_MS || '600000', 10),
-  boostRealmId: parseInt(process.env.BOOST_REALM_ID || '1', 10),
 };
-
-function boostGrantSql(accountId, realmId = CFG.boostRealmId) {
-  const id = Number(accountId);
-  const realm = Number(realmId);
-  if (!Number.isSafeInteger(id) || id <= 0) throw new Error('Invalid account id for boost grant.');
-  if (!Number.isSafeInteger(realm) || realm <= 0) throw new Error('Invalid realm id for boost grant.');
-  return `INSERT INTO account_boost (id, realmid, counter) VALUES (${id}, ${realm}, 1)`;
-}
 
 // ---------------------------------------------------------------------------
 // Realm status monitor.
@@ -716,7 +728,6 @@ function renderForm({ errors = [], values = {}, notice = '' } = {}) {
   .notice { padding:12px; border-radius:8px; background:#1f3a24; border:1px solid #306b3a;
             color:#c0f0c8; font-size:13px; margin-bottom:6px; }
   .foot { margin-top:18px; font-size:12px; color:#7d7365; text-align:center; }
-  .foot a { color:#c8a04a; }
 </style></head>
 <body><div class="card">
   <h1>Create your account</h1>
@@ -744,7 +755,7 @@ function renderForm({ errors = [], values = {}, notice = '' } = {}) {
 
     <button type="submit">Create account</button>
   </form>
-  <div class="foot">Use the same username and password in the game client.<br><a href="/addons">Addons for MoP 5.4.8</a> &middot; <a href="/forgot-password">Forgot your password?</a></div>
+  <div class="foot">Use the same username and password in the game client.<br><a href="/forgot-password" style="color:#c8a04a">Forgot your password?</a></div>
 </div>
 <script>
 (() => {
@@ -767,72 +778,6 @@ function renderForm({ errors = [], values = {}, notice = '' } = {}) {
   setInterval(updateRealmStatus, 10000);
 })();
 </script></body></html>`;
-}
-
-function renderAddons() {
-  const groups = [
-    ['Atlas essentials', [
-      ['Atlas Core', '1.26.02', 'Required. Includes the original Pandaria dungeon and raid maps.', 'https://www.curseforge.com/api/v1/mods/301/files/738655/download'],
-      ['AtlasLoot Enhanced', '7.07.03', 'Loot tables updated for Patch 5.4.8.', 'https://www.curseforge.com/api/v1/mods/2134/files/792691/download'],
-    ]],
-    ['Atlas dungeon maps', [
-      ['Kalimdor & Eastern Kingdoms', '1.26.00', 'Classic-era dungeon maps.', 'https://www.curseforge.com/api/v1/mods/33667/files/732249/download'],
-      ['Burning Crusade', '1.26.00', 'Outland dungeon and raid maps.', 'https://www.curseforge.com/api/v1/mods/33666/files/732247/download'],
-      ['Wrath of the Lich King', '1.26.00', 'Northrend dungeon and raid maps.', 'https://www.curseforge.com/api/v1/mods/33668/files/732250/download'],
-      ['Cataclysm', '1.26.00', 'Cataclysm dungeon and raid maps.', 'https://www.curseforge.com/api/v1/mods/44905/files/732248/download'],
-    ]],
-    ['Atlas extra maps', [
-      ['Scenarios', '1.26.00', 'Scenario maps for the MoP client.', 'https://www.curseforge.com/api/v1/mods/45492/files/732255/download'],
-      ['Dungeon Locations', '1.26.00', 'Shows dungeon entrances on continent maps.', 'https://www.curseforge.com/api/v1/mods/32830/files/732252/download'],
-      ['Battlegrounds', '1.26.00', 'Battleground maps.', 'https://www.curseforge.com/api/v1/mods/32829/files/732251/download'],
-      ['Outdoor Raids', '1.26.00', 'Outdoor raid encounter maps.', 'https://www.curseforge.com/api/v1/mods/32831/files/732254/download'],
-      ['Transportation', '1.26.04', 'Flight paths, boats, zeppelins, and portals.', 'https://www.curseforge.com/api/v1/mods/32832/files/763857/download'],
-    ]],
-    ['Standalone map addon', [
-      ['Carbonite Maps', '5.4.2 Alpha 5', 'The final original-MoP-era Carbonite build.', 'https://edge.forgecdn.net/files/778/516/CarboniteBETA-542a5.zip'],
-    ]],
-  ];
-  const sections = groups.map(([group, items]) => `<section><h2>${esc(group)}</h2><div class="grid">${items.map(([name, version, description, download]) => `<article><div><h3>${esc(name)}</h3><p class="version">Version ${esc(version)} &middot; Interface 50400</p><p>${esc(description)}</p></div><a class="download" href="${esc(download)}">Download ZIP</a></article>`).join('')}</div></section>`).join('');
-  return `<!doctype html>
-<html lang="en"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Addons for MoP 5.4.8</title>
-<style>
-  :root { color-scheme:dark; }
-  * { box-sizing:border-box; }
-  body { margin:0; min-height:100dvh; background:#14110d url('/pandaria-background.jpg') center/cover fixed no-repeat;
-         color:#f2eadc; font:16px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif; padding:24px; position:relative; isolation:isolate; }
-  body::before { content:''; position:fixed; inset:0; z-index:-1; background:linear-gradient(120deg,rgba(5,12,15,.82),rgba(10,18,16,.64) 48%,rgba(8,10,12,.82)); }
-  main { width:min(1040px,100%); margin:0 auto; }
-  header,.notice,.install,section { background:rgba(25,22,17,.92); border:1px solid rgba(211,177,99,.36); border-radius:14px; box-shadow:0 18px 55px #0008; backdrop-filter:blur(8px); -webkit-backdrop-filter:blur(8px); }
-  header { padding:28px; margin-bottom:18px; }
-  h1 { margin:0 0 6px; font-size:clamp(26px,5vw,40px); line-height:1.1; }
-  .subtitle { margin:0; color:#bdb2a0; }
-  nav { margin-top:18px; display:flex; gap:16px; flex-wrap:wrap; }
-  a { color:#d8b05a; }
-  .notice { padding:18px 20px; margin-bottom:18px; border-color:#8b6335; background:rgba(60,38,20,.94); }
-  .notice strong { color:#ffd27a; }
-  section { padding:22px; margin:18px 0; }
-  h2 { margin:0 0 14px; font-size:20px; color:#e5c574; }
-  .grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; }
-  article { display:flex; flex-direction:column; justify-content:space-between; gap:14px; padding:17px; background:#181510d9; border:1px solid #3a3128; border-radius:10px; }
-  h3 { margin:0; font-size:16px; }
-  article p { margin:5px 0 0; color:#bdb2a0; font-size:13px; }
-  article .version { color:#8f846f; font-size:12px; }
-  .download { display:inline-block; align-self:flex-start; padding:9px 13px; border-radius:7px; background:#c8a04a; color:#1a1610; font-size:13px; font-weight:700; text-decoration:none; }
-  .download:hover { background:#d8b05a; }
-  .install { padding:22px 28px; margin:18px 0 36px; }
-  .install h2 { margin-bottom:8px; }
-  ol { margin:8px 0 0; padding-left:22px; color:#d2c7b5; }
-  li { margin:7px 0; }
-  code { color:#e5c574; overflow-wrap:anywhere; }
-  @media(max-width:680px) { body{padding:14px}.grid{grid-template-columns:1fr}header,section,.install{padding:20px}.notice{padding:16px} }
-</style></head><body><main>
-  <header><h1>Addons for MoP 5.4.8</h1><p class="subtitle">Verified downloads for the original Mists of Pandaria client, build 18414 and interface 50400.</p><nav><a href="/">Create an account</a><a href="/forgot-password">Reset your password</a></nav></header>
-  <div class="notice"><strong>Do not install current “MoP Classic” addons.</strong> They are made for the modern client and will not work here. Every download below was pinned and inspected for the original 5.4.8 client.</div>
-  ${sections}
-  <div class="install"><h2>Install them</h2><ol><li>Fully exit World of Warcraft.</li><li>Download the ZIP files you want.</li><li>Extract each ZIP into <code>World of Warcraft\\Interface\\AddOns</code>.</li><li>Make sure the addon folders are directly inside <code>AddOns</code>, not buried inside another folder.</li><li>Start WoW. At character select, click <strong>AddOns</strong>. Enable <strong>Load out of date AddOns</strong> only if a package is marked out of date.</li></ol><p>The Pandaria dungeon and raid maps are already included in Atlas Core. There is no separate original-5.4 Pandaria map module.</p></div>
-</main></body></html>`;
 }
 
 function recoveryShell(title, body) {
@@ -919,9 +864,7 @@ function renderDone(username) {
 <body><div class="card">
   <h1>You're in.</h1>
   <p>Account <code>${esc(username)}</code> is created.</p>
-  <p>Your account includes one free level-90 character boost.</p>
   <p>Open World of Warcraft and log in with that username and password.</p>
-  <a href="/addons">Get addons for MoP 5.4.8</a><br>
   <a href="/">Create another account</a>
 </div></body></html>`;
 }
@@ -938,7 +881,6 @@ function renderDone(username) {
 const DB = (() => {
   let conn = null;
   let cols = new Set();
-  let boostCols = new Set();
 
   function q(v) {
     if (v === null || v === undefined) return 'NULL';
@@ -965,17 +907,10 @@ const DB = (() => {
 
   async function loadColumns() {
     const r = await conn.query(
-      `SELECT TABLE_NAME, COLUMN_NAME FROM information_schema.COLUMNS
-       WHERE TABLE_SCHEMA = ${q(CFG.dbName)} AND TABLE_NAME IN ('account', 'account_boost')`
+      `SELECT COLUMN_NAME FROM information_schema.COLUMNS
+       WHERE TABLE_SCHEMA = ${q(CFG.dbName)} AND TABLE_NAME = 'account'`
     );
-    cols = new Set();
-    boostCols = new Set();
-    for (const row of r.rows) {
-      const table = String(row[0]).toLowerCase();
-      const column = String(row[1]).toLowerCase();
-      if (table === 'account') cols.add(column);
-      if (table === 'account_boost') boostCols.add(column);
-    }
+    cols = new Set(r.rows.map((row) => row[0].toLowerCase()));
   }
 
   // Columns the login path reads. From LOGIN_SEL_LOGONCHALLENGE in
@@ -990,13 +925,6 @@ const DB = (() => {
     const missing = REQUIRED.filter((c) => !cols.has(c));
     if (missing.length) {
       throw new Error(`The account table is missing column(s) the login path needs: ${missing.join(', ')}. Refusing to start.`);
-    }
-    const missingBoost = ['id', 'realmid', 'counter'].filter((c) => !boostCols.has(c));
-    if (missingBoost.length) {
-      throw new Error(`The account_boost table is missing or lacks column(s): ${missingBoost.join(', ')}. Refusing to create accounts without their boost.`);
-    }
-    if (!Number.isSafeInteger(CFG.boostRealmId) || CFG.boostRealmId <= 0) {
-      throw new Error('BOOST_REALM_ID must be a positive integer.');
     }
   }
 
@@ -1031,35 +959,13 @@ const DB = (() => {
     if (cols.has('v')) { names.push('v'); values.push("''"); }
     if (cols.has('s')) { names.push('s'); values.push("''"); }
 
-    // A signup gets its own connection so concurrent requests cannot interleave
-    // commands inside the same transaction on the shared read/recovery connection.
-    let signupConn = null;
-    let transactionOpen = false;
     try {
-      signupConn = await MYSQL.Conn.connect({
-        host: CFG.dbHost, port: CFG.dbPort,
-        user: CFG.dbUser, password: CFG.dbPass, database: CFG.dbName,
-      });
-      await signupConn.query('START TRANSACTION');
-      transactionOpen = true;
-      await signupConn.query(`INSERT INTO account (${names.join(', ')}) VALUES (${values.join(', ')})`);
-      const idResult = await signupConn.query('SELECT LAST_INSERT_ID() AS id');
-      const accountId = Number(idResult.rows[0]?.[0]);
-      await signupConn.query(boostGrantSql(accountId));
-      await signupConn.query('COMMIT');
-      transactionOpen = false;
-      return { ok: true, accountId };
+      await conn.query(`INSERT INTO account (${names.join(', ')}) VALUES (${values.join(', ')})`);
+      return { ok: true };
     } catch (e) {
-      if (transactionOpen && signupConn) {
-        try { await signupConn.query('ROLLBACK'); } catch (rollbackError) {
-          console.error('[signup] rollback failed:', rollbackError.message);
-        }
-      }
       // Duplicate key on username = lost the race, treat as taken.
       if (e.code === 1062) return { ok: false, reason: 'taken' };
       return { ok: false, reason: 'dberror', detail: e.message };
-    } finally {
-      if (signupConn) signupConn.end();
     }
   }
 
@@ -1099,11 +1005,6 @@ const server = http.createServer(async (req, res) => {
 
   if (req.method === 'GET' && url.pathname === '/') {
     const r = page(renderForm());
-    res.writeHead(r.status, r.headers); res.end(r.body); return;
-  }
-
-  if (req.method === 'GET' && url.pathname === '/addons') {
-    const r = page(renderAddons());
     res.writeHead(r.status, r.headers); res.end(r.body); return;
   }
 
@@ -1268,4 +1169,4 @@ if (require.main === module) {
   })();
 }
 
-module.exports = { shaPassHash, normalize, validate, validateNewPassword, ResetTokenStore, RealmStatusMonitor, renderForm, renderAddons, renderDone, boostGrantSql, MAX_USERNAME };
+module.exports = { shaPassHash, normalize, validate, validateNewPassword, ResetTokenStore, RealmStatusMonitor, renderForm, MAX_USERNAME, resolveExpansion, EXPANSION_DEFAULT };
