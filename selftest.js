@@ -14,7 +14,7 @@
 const assert = require('node:assert');
 const {
   shaPassHash, normalize, validate, validateNewPassword, ResetTokenStore,
-  RealmStatusMonitor, renderForm, renderDone, boostGrantSql, MAX_USERNAME,
+  RealmStatusMonitor, renderForm, renderAddons, renderDone, boostGrantSql, MAX_USERNAME,
 } = require('./server.js');
 
 let pass = 0;
@@ -234,6 +234,30 @@ check('boost grant rejects invalid account and realm identifiers', () => {
 
 check('success page tells the player about the free level-90 boost', () => {
   assert.match(renderDone('WILLA'), /one free level-90 character boost/i);
+});
+
+// ---------------------------------------------------------------------------
+// 8. Public original-MoP addon downloads.
+// ---------------------------------------------------------------------------
+check('signup and success pages link to the Addons page', () => {
+  assert.match(renderForm(), /href="\/addons"/);
+  assert.match(renderDone('WILLA'), /href="\/addons"/);
+});
+
+check('Addons page pins all twelve verified downloads', () => {
+  const html = renderAddons();
+  assert.strictEqual((html.match(/class="download"/g) || []).length, 12);
+  for (const id of ['738655', '732249', '732247', '732250', '732248', '732255', '732252', '732251', '732254', '763857', '792691', '778/516']) {
+    assert.ok(html.includes(id), `missing verified download ${id}`);
+  }
+});
+
+check('Addons page warns against modern MoP Classic and gives install steps', () => {
+  const html = renderAddons();
+  assert.match(html, /Do not install current.*MoP Classic/i);
+  assert.ok(html.includes('World of Warcraft\\Interface\\AddOns'));
+  assert.match(html, /Pandaria dungeon and raid maps are already included in Atlas Core/i);
+  assert.match(html, /Interface 50400/);
 });
 
 // ---------------------------------------------------------------------------

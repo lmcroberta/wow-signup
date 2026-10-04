@@ -716,6 +716,7 @@ function renderForm({ errors = [], values = {}, notice = '' } = {}) {
   .notice { padding:12px; border-radius:8px; background:#1f3a24; border:1px solid #306b3a;
             color:#c0f0c8; font-size:13px; margin-bottom:6px; }
   .foot { margin-top:18px; font-size:12px; color:#7d7365; text-align:center; }
+  .foot a { color:#c8a04a; }
 </style></head>
 <body><div class="card">
   <h1>Create your account</h1>
@@ -743,7 +744,7 @@ function renderForm({ errors = [], values = {}, notice = '' } = {}) {
 
     <button type="submit">Create account</button>
   </form>
-  <div class="foot">Use the same username and password in the game client.<br><a href="/forgot-password" style="color:#c8a04a">Forgot your password?</a></div>
+  <div class="foot">Use the same username and password in the game client.<br><a href="/addons">Addons for MoP 5.4.8</a> &middot; <a href="/forgot-password">Forgot your password?</a></div>
 </div>
 <script>
 (() => {
@@ -766,6 +767,72 @@ function renderForm({ errors = [], values = {}, notice = '' } = {}) {
   setInterval(updateRealmStatus, 10000);
 })();
 </script></body></html>`;
+}
+
+function renderAddons() {
+  const groups = [
+    ['Atlas essentials', [
+      ['Atlas Core', '1.26.02', 'Required. Includes the original Pandaria dungeon and raid maps.', 'https://www.curseforge.com/api/v1/mods/301/files/738655/download'],
+      ['AtlasLoot Enhanced', '7.07.03', 'Loot tables updated for Patch 5.4.8.', 'https://www.curseforge.com/api/v1/mods/2134/files/792691/download'],
+    ]],
+    ['Atlas dungeon maps', [
+      ['Kalimdor & Eastern Kingdoms', '1.26.00', 'Classic-era dungeon maps.', 'https://www.curseforge.com/api/v1/mods/33667/files/732249/download'],
+      ['Burning Crusade', '1.26.00', 'Outland dungeon and raid maps.', 'https://www.curseforge.com/api/v1/mods/33666/files/732247/download'],
+      ['Wrath of the Lich King', '1.26.00', 'Northrend dungeon and raid maps.', 'https://www.curseforge.com/api/v1/mods/33668/files/732250/download'],
+      ['Cataclysm', '1.26.00', 'Cataclysm dungeon and raid maps.', 'https://www.curseforge.com/api/v1/mods/44905/files/732248/download'],
+    ]],
+    ['Atlas extra maps', [
+      ['Scenarios', '1.26.00', 'Scenario maps for the MoP client.', 'https://www.curseforge.com/api/v1/mods/45492/files/732255/download'],
+      ['Dungeon Locations', '1.26.00', 'Shows dungeon entrances on continent maps.', 'https://www.curseforge.com/api/v1/mods/32830/files/732252/download'],
+      ['Battlegrounds', '1.26.00', 'Battleground maps.', 'https://www.curseforge.com/api/v1/mods/32829/files/732251/download'],
+      ['Outdoor Raids', '1.26.00', 'Outdoor raid encounter maps.', 'https://www.curseforge.com/api/v1/mods/32831/files/732254/download'],
+      ['Transportation', '1.26.04', 'Flight paths, boats, zeppelins, and portals.', 'https://www.curseforge.com/api/v1/mods/32832/files/763857/download'],
+    ]],
+    ['Standalone map addon', [
+      ['Carbonite Maps', '5.4.2 Alpha 5', 'The final original-MoP-era Carbonite build.', 'https://edge.forgecdn.net/files/778/516/CarboniteBETA-542a5.zip'],
+    ]],
+  ];
+  const sections = groups.map(([group, items]) => `<section><h2>${esc(group)}</h2><div class="grid">${items.map(([name, version, description, download]) => `<article><div><h3>${esc(name)}</h3><p class="version">Version ${esc(version)} &middot; Interface 50400</p><p>${esc(description)}</p></div><a class="download" href="${esc(download)}">Download ZIP</a></article>`).join('')}</div></section>`).join('');
+  return `<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Addons for MoP 5.4.8</title>
+<style>
+  :root { color-scheme:dark; }
+  * { box-sizing:border-box; }
+  body { margin:0; min-height:100dvh; background:#14110d url('/pandaria-background.jpg') center/cover fixed no-repeat;
+         color:#f2eadc; font:16px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif; padding:24px; position:relative; isolation:isolate; }
+  body::before { content:''; position:fixed; inset:0; z-index:-1; background:linear-gradient(120deg,rgba(5,12,15,.82),rgba(10,18,16,.64) 48%,rgba(8,10,12,.82)); }
+  main { width:min(1040px,100%); margin:0 auto; }
+  header,.notice,.install,section { background:rgba(25,22,17,.92); border:1px solid rgba(211,177,99,.36); border-radius:14px; box-shadow:0 18px 55px #0008; backdrop-filter:blur(8px); -webkit-backdrop-filter:blur(8px); }
+  header { padding:28px; margin-bottom:18px; }
+  h1 { margin:0 0 6px; font-size:clamp(26px,5vw,40px); line-height:1.1; }
+  .subtitle { margin:0; color:#bdb2a0; }
+  nav { margin-top:18px; display:flex; gap:16px; flex-wrap:wrap; }
+  a { color:#d8b05a; }
+  .notice { padding:18px 20px; margin-bottom:18px; border-color:#8b6335; background:rgba(60,38,20,.94); }
+  .notice strong { color:#ffd27a; }
+  section { padding:22px; margin:18px 0; }
+  h2 { margin:0 0 14px; font-size:20px; color:#e5c574; }
+  .grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; }
+  article { display:flex; flex-direction:column; justify-content:space-between; gap:14px; padding:17px; background:#181510d9; border:1px solid #3a3128; border-radius:10px; }
+  h3 { margin:0; font-size:16px; }
+  article p { margin:5px 0 0; color:#bdb2a0; font-size:13px; }
+  article .version { color:#8f846f; font-size:12px; }
+  .download { display:inline-block; align-self:flex-start; padding:9px 13px; border-radius:7px; background:#c8a04a; color:#1a1610; font-size:13px; font-weight:700; text-decoration:none; }
+  .download:hover { background:#d8b05a; }
+  .install { padding:22px 28px; margin:18px 0 36px; }
+  .install h2 { margin-bottom:8px; }
+  ol { margin:8px 0 0; padding-left:22px; color:#d2c7b5; }
+  li { margin:7px 0; }
+  code { color:#e5c574; overflow-wrap:anywhere; }
+  @media(max-width:680px) { body{padding:14px}.grid{grid-template-columns:1fr}header,section,.install{padding:20px}.notice{padding:16px} }
+</style></head><body><main>
+  <header><h1>Addons for MoP 5.4.8</h1><p class="subtitle">Verified downloads for the original Mists of Pandaria client, build 18414 and interface 50400.</p><nav><a href="/">Create an account</a><a href="/forgot-password">Reset your password</a></nav></header>
+  <div class="notice"><strong>Do not install current “MoP Classic” addons.</strong> They are made for the modern client and will not work here. Every download below was pinned and inspected for the original 5.4.8 client.</div>
+  ${sections}
+  <div class="install"><h2>Install them</h2><ol><li>Fully exit World of Warcraft.</li><li>Download the ZIP files you want.</li><li>Extract each ZIP into <code>World of Warcraft\\Interface\\AddOns</code>.</li><li>Make sure the addon folders are directly inside <code>AddOns</code>, not buried inside another folder.</li><li>Start WoW. At character select, click <strong>AddOns</strong>. Enable <strong>Load out of date AddOns</strong> only if a package is marked out of date.</li></ol><p>The Pandaria dungeon and raid maps are already included in Atlas Core. There is no separate original-5.4 Pandaria map module.</p></div>
+</main></body></html>`;
 }
 
 function recoveryShell(title, body) {
@@ -854,6 +921,7 @@ function renderDone(username) {
   <p>Account <code>${esc(username)}</code> is created.</p>
   <p>Your account includes one free level-90 character boost.</p>
   <p>Open World of Warcraft and log in with that username and password.</p>
+  <a href="/addons">Get addons for MoP 5.4.8</a><br>
   <a href="/">Create another account</a>
 </div></body></html>`;
 }
@@ -1034,6 +1102,11 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(r.status, r.headers); res.end(r.body); return;
   }
 
+  if (req.method === 'GET' && url.pathname === '/addons') {
+    const r = page(renderAddons());
+    res.writeHead(r.status, r.headers); res.end(r.body); return;
+  }
+
   if (req.method === 'GET' && url.pathname === '/pandaria-background.jpg') {
     fs.readFile(BACKGROUND_PATH, (err, image) => {
       if (err) { res.writeHead(404, { 'Content-Type': 'text/plain' }); res.end('Not found'); return; }
@@ -1195,4 +1268,4 @@ if (require.main === module) {
   })();
 }
 
-module.exports = { shaPassHash, normalize, validate, validateNewPassword, ResetTokenStore, RealmStatusMonitor, renderForm, renderDone, boostGrantSql, MAX_USERNAME };
+module.exports = { shaPassHash, normalize, validate, validateNewPassword, ResetTokenStore, RealmStatusMonitor, renderForm, renderAddons, renderDone, boostGrantSql, MAX_USERNAME };
