@@ -14,7 +14,7 @@
 const assert = require('node:assert');
 const {
   shaPassHash, normalize, validate, validateNewPassword, ResetTokenStore,
-  RealmStatusMonitor, renderForm, MAX_USERNAME,
+  RealmStatusMonitor, renderForm, renderDone, boostGrantSql, MAX_USERNAME,
 } = require('./server.js');
 
 let pass = 0;
@@ -215,6 +215,25 @@ check('signup page contains the live three-state status badge and endpoint', () 
   assert.match(html, /id="realm-status"/);
   assert.match(html, /\/realm-status/);
   assert.match(html, /online.*starting.*offline/);
+});
+
+// ---------------------------------------------------------------------------
+// 7. One built-in character boost per new account.
+// ---------------------------------------------------------------------------
+check('boost grant creates exactly one credit for the configured realm', () => {
+  assert.strictEqual(
+    boostGrantSql(42, 1),
+    'INSERT INTO account_boost (id, realmid, counter) VALUES (42, 1, 1)'
+  );
+});
+
+check('boost grant rejects invalid account and realm identifiers', () => {
+  assert.throws(() => boostGrantSql(0, 1), /Invalid account id/);
+  assert.throws(() => boostGrantSql(42, 0), /Invalid realm id/);
+});
+
+check('success page tells the player about the free level-90 boost', () => {
+  assert.match(renderDone('WILLA'), /one free level-90 character boost/i);
 });
 
 // ---------------------------------------------------------------------------

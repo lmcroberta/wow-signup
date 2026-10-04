@@ -13,7 +13,8 @@
  *   verified at AccountMgr.cpp:341 + normalizeString() at AccountMgr.cpp:323.
  *   So we can compute the hash ourselves. No worldserver needed, no admin
  *   credential stored anywhere, and signups work while the game server is off.
- *   Least privilege: it only ever INSERTs into `account`.
+ *   Least privilege: it INSERTs into `account` and `account_boost`, and recovery
+ *   has column-limited UPDATE permission on `account`.
  *
  * ZERO DEPENDENCIES — on purpose. Uses node:http + node:crypto only.
  * Node 18+. No npm install. Nothing to break.
@@ -26,6 +27,7 @@
  *   ACCOUNT_EXPANSION (default 5 — MoP. NOT the schema default of 4.)
  *   REQUIRE_EMAIL (default 0)
  *   MAX_PER_IP_PER_DAY (default 5)
+ *   BOOST_REALM_ID (default 1 — grants one built-in boost credit per signup)
  */
 
 'use strict';
@@ -409,7 +411,16 @@ const CFG = {
   realmStatusTimeoutMs: parseInt(process.env.REALM_STATUS_TIMEOUT_MS || '1200', 10),
   realmStatusPollMs: parseInt(process.env.REALM_STATUS_POLL_MS || '5000', 10),
   realmStartingWindowMs: parseInt(process.env.REALM_STARTING_WINDOW_MS || '600000', 10),
+  boostRealmId: parseInt(process.env.BOOST_REALM_ID || '1', 10),
 };
+
+function boostGrantSql(accountId, realmId = CFG.boostRealmId) {
+  const id = Number(accountId);
+  const realm = Number(realmId);
+  if (!Number.isSafeInteger(id) || id <= 0) throw new Error('Invalid account id for boost grant.');
+  if (!Number.isSafeInteger(realm) || realm <= 0) throw new Error('Invalid realm id for boost grant.');
+  return `INSERT INTO account_boost (id, realmid, counter) VALUES (${id}, ${realm}, 1)`;
+}
 
 // ---------------------------------------------------------------------------
 // Realm status monitor.
@@ -841,6 +852,7 @@ function renderDone(username) {
 <body><div class="card">
   <h1>You're in.</h1>
   <p>Account <code>${esc(username)}</code> is created.</p>
+  <p>Your account includes one free level-90 character boost.</p>
   <p>Open World of Warcraft and log in with that username and password.</p>
   <a href="/">Create another account</a>
 </div></body></html>`;
@@ -858,6 +870,7 @@ function renderDone(username) {
 const DB = (() => {
   let conn = null;
   let cols = new Set();
+  let boostCols = new Set();
 
   function q(v) {
     if (v === null || v === undefined) return 'NULL';
@@ -884,10 +897,17 @@ const DB = (() => {
 
   async function loadColumns() {
     const r = await conn.query(
-      `SELECT COLUMN_NAME FROM information_schema.COLUMNS
-       WHERE TABLE_SCHEMA = ${q(CFG.dbName)} AND TABLE_NAME = 'account'`
+      `SELECT TABLE_NAME, COLUMN_NAME FROM information_schema.COLUMNS
+       WHERE TABLE_SCHEMA = ${q(CFG.dbName)} AND TABLE_NAME IN ('account', 'account_boost')`
     );
-    cols = new Set(r.rows.map((row) => row[0].toLowerCase()));
+    cols = new Set();
+    boostCols = new Set();
+    for (const row of r.rows) {
+      const table = String(row[0]).toLowerCase();
+      const column = String(row[1]).toLowerCase();
+      if (table === 'account') cols.add(column);
+      if (table === 'account_boost') boostCols.add(column);
+    }
   }
 
   // Columns the login path reads. From LOGIN_SEL_LOGONCHALLENGE in
@@ -902,6 +922,13 @@ const DB = (() => {
     const missing = REQUIRED.filter((c) => !cols.has(c));
     if (missing.length) {
       throw new Error(`The account table is missing column(s) the login path needs: ${missing.join(', ')}. Refusing to start.`);
+    }
+    const missingBoost = ['id', 'realmid', 'counter'].filter((c) => !boostCols.has(c));
+    if (missingBoost.length) {
+      throw new Error(`The account_boost table is missing or lacks column(s): ${missingBoost.join(', ')}. Refusing to create accounts without their boost.`);
+    }
+    if (!Number.isSafeInteger(CFG.boostRealmId) || CFG.boostRealmId <= 0) {
+      throw new Error('BOOST_REALM_ID must be a positive integer.');
     }
   }
 
@@ -936,13 +963,35 @@ const DB = (() => {
     if (cols.has('v')) { names.push('v'); values.push("''"); }
     if (cols.has('s')) { names.push('s'); values.push("''"); }
 
+    // A signup gets its own connection so concurrent requests cannot interleave
+    // commands inside the same transaction on the shared read/recovery connection.
+    let signupConn = null;
+    let transactionOpen = false;
     try {
-      await conn.query(`INSERT INTO account (${names.join(', ')}) VALUES (${values.join(', ')})`);
-      return { ok: true };
+      signupConn = await MYSQL.Conn.connect({
+        host: CFG.dbHost, port: CFG.dbPort,
+        user: CFG.dbUser, password: CFG.dbPass, database: CFG.dbName,
+      });
+      await signupConn.query('START TRANSACTION');
+      transactionOpen = true;
+      await signupConn.query(`INSERT INTO account (${names.join(', ')}) VALUES (${values.join(', ')})`);
+      const idResult = await signupConn.query('SELECT LAST_INSERT_ID() AS id');
+      const accountId = Number(idResult.rows[0]?.[0]);
+      await signupConn.query(boostGrantSql(accountId));
+      await signupConn.query('COMMIT');
+      transactionOpen = false;
+      return { ok: true, accountId };
     } catch (e) {
+      if (transactionOpen && signupConn) {
+        try { await signupConn.query('ROLLBACK'); } catch (rollbackError) {
+          console.error('[signup] rollback failed:', rollbackError.message);
+        }
+      }
       // Duplicate key on username = lost the race, treat as taken.
       if (e.code === 1062) return { ok: false, reason: 'taken' };
       return { ok: false, reason: 'dberror', detail: e.message };
+    } finally {
+      if (signupConn) signupConn.end();
     }
   }
 
@@ -1146,4 +1195,4 @@ if (require.main === module) {
   })();
 }
 
-module.exports = { shaPassHash, normalize, validate, validateNewPassword, ResetTokenStore, RealmStatusMonitor, renderForm, MAX_USERNAME };
+module.exports = { shaPassHash, normalize, validate, validateNewPassword, ResetTokenStore, RealmStatusMonitor, renderForm, renderDone, boostGrantSql, MAX_USERNAME };
