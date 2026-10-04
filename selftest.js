@@ -12,7 +12,7 @@
 'use strict';
 
 const assert = require('node:assert');
-const { shaPassHash, normalize, validate, MAX_USERNAME } = require('./server.js');
+const { shaPassHash, normalize, validate, validateNewPassword, ResetTokenStore, MAX_USERNAME } = require('./server.js');
 
 let pass = 0;
 let fail = 0;
@@ -126,6 +126,44 @@ check('accepts a clean signup with no email', () => {
 
 check('accepts a clean signup with an email', () => {
   assert.deepStrictEqual(validate('tyler', 'hunter2', 'hunter2', 't@example.com'), []);
+});
+
+// ---------------------------------------------------------------------------
+// 5. Password-recovery tokens and new-password validation.
+// ---------------------------------------------------------------------------
+check('reset token is random 64-character hex and only its hash is stored', () => {
+  const store = new ResetTokenStore(30);
+  const token = store.issue(42, 'TYLER', 1000);
+  assert.match(token, /^[0-9a-f]{64}$/);
+  assert.ok(!store.tokens.has(token), 'plaintext token must never be stored');
+  assert.strictEqual(store.tokens.size, 1);
+});
+
+check('reset token can be used once only', () => {
+  const store = new ResetTokenStore(30);
+  const token = store.issue(42, 'TYLER', 1000);
+  assert.deepStrictEqual(store.consume(token, 2000), { accountId: 42, username: 'TYLER', expires: 1801000 });
+  assert.strictEqual(store.consume(token, 2000), null);
+});
+
+check('reset token expires', () => {
+  const store = new ResetTokenStore(1);
+  const token = store.issue(42, 'TYLER', 1000);
+  assert.strictEqual(store.find(token, 61000), null);
+});
+
+check('issuing another token invalidates the older account token', () => {
+  const store = new ResetTokenStore(30);
+  const first = store.issue(42, 'TYLER', 1000);
+  const second = store.issue(42, 'TYLER', 2000);
+  assert.strictEqual(store.find(first, 3000), null);
+  assert.ok(store.find(second, 3000));
+});
+
+check('new-password validation enforces password rules and confirmation', () => {
+  assert.ok(validateNewPassword('abc', 'abc').length > 0);
+  assert.ok(validateNewPassword('hunter2', 'hunter3').length > 0);
+  assert.deepStrictEqual(validateNewPassword('hunter2', 'hunter2'), []);
 });
 
 // ---------------------------------------------------------------------------

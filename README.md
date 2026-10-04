@@ -63,7 +63,7 @@ does not assume the base schema is correct.
 ## Files
 
 - `server.js` — the whole thing. Zero dependencies. Node 18+.
-- `selftest.js` — 17 tests, no DB needed. Run `node selftest.js`.
+- `selftest.js` — 22 tests, no DB or email needed. Run `node selftest.js`.
 - `check-db.js` — read-only diagnostic. Tells you if the page can reach the DB.
 - `Dockerfile` — for a TrueNAS custom-app install. Zero dependencies means there is
   no `npm install` step; it just copies the three files and runs `node server.js`
@@ -84,7 +84,15 @@ Environment variables:
 | `REALM_NAME` | *(blank)* | Shown on the page. Display only |
 | `ACCOUNT_EXPANSION` | `5` | MoP. Do not lower this |
 | `REQUIRE_EMAIL` | `0` | Set to `1` to make email mandatory |
-| `MAX_PER_IP_PER_DAY` | `5` | Crude rate limit |
+| `MAX_PER_IP_PER_DAY` | `5` | Signup rate limit |
+| `SMTP_HOST` | `smtp.gmail.com` | Gmail SMTP server |
+| `SMTP_PORT` | `587` | Gmail STARTTLS port |
+| `SMTP_USER` | *(required for recovery)* | Full Gmail address used to send reset messages |
+| `SMTP_PASS` | *(required for recovery)* | Google app password, supplied as a secret; spaces are ignored |
+| `MAIL_FROM` | `SMTP_USER` | Sender address shown on reset messages |
+| `PUBLIC_BASE_URL` | *(required for recovery)* | Public site root, for example `https://mop.example.com` |
+| `RESET_TOKEN_TTL_MINUTES` | `30` | Reset-link lifetime |
+| `RECOVERY_MAX_PER_IP_PER_HOUR` | `5` | Recovery request rate limit |
 
 ```bash
 node selftest.js      # prove the hash is right, no DB needed
@@ -102,12 +110,20 @@ node server.js        # run it
 2. **MySQL user auth.** If his MySQL account uses `caching_sha2_password` (MySQL 8
    default), the bundled client will tell him to switch that user to
    `mysql_native_password`. This is a one-line `ALTER USER`.
-3. **No email verification.** Anyone who can reach the page can make an account. That is
-   the point, but it means the rate limit is the only abuse control.
-4. **HTTP, no TLS.** Fine on the LAN. Do not expose it to the internet as-is.
-5. **The client is hand-rolled.** It speaks enough of the MySQL wire protocol to do a
-   SELECT and an INSERT. It is tested, but it is not a general-purpose driver. If Robert
-   ever wants more, swap the `MYSQL` block for `mysql2` and nothing else changes.
+3. **Recovery requires a Gmail app password.** Turn on 2-Step Verification for the
+   sending Google account, create an app password, and enter that value as `SMTP_PASS`.
+   Never use or store the normal Google account password in this app.
+4. **The MySQL user needs UPDATE for recovery.** Signup used only SELECT + INSERT. Password
+   reset additionally needs `UPDATE (sha_pass_hash, v, s)` on `auth.account`. Grant it
+   locally on ROSCOEELVIS as a privileged MySQL user; the remote wowadmin user cannot GRANT.
+5. **Reset links live in memory.** Only SHA-256 hashes of the random tokens are retained,
+   but restarting or redeploying the app invalidates every outstanding reset link. This
+   deliberately avoids altering the EmuCoach account schema or adding a storage mount.
+6. **No email verification.** Anyone who can reach the page can make an account. Recovery
+   requests use a generic response and are rate-limited so account details are not exposed.
+7. **TLS terminates at Cloudflare.** The app itself serves HTTP behind the tunnel.
+8. **The client is hand-rolled.** It speaks the MySQL and Gmail SMTP operations this app
+   needs. It is tested, but it is not a general-purpose library.
 
 ## Still needed from Robert before this can be installed
 

@@ -33,6 +33,7 @@
 const http = require('node:http');
 const crypto = require('node:crypto');
 const net = require('node:net');
+const tls = require('node:tls');
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -394,6 +395,14 @@ const CFG = {
   expansion: parseInt(process.env.ACCOUNT_EXPANSION || '5', 10),
   requireEmail: (process.env.REQUIRE_EMAIL || '0') === '1',
   maxPerIpPerDay: parseInt(process.env.MAX_PER_IP_PER_DAY || '5', 10),
+  smtpHost: process.env.SMTP_HOST || 'smtp.gmail.com',
+  smtpPort: parseInt(process.env.SMTP_PORT || '587', 10),
+  smtpUser: process.env.SMTP_USER || '',
+  smtpPass: (process.env.SMTP_PASS || '').replace(/\s+/g, ''),
+  mailFrom: process.env.MAIL_FROM || process.env.SMTP_USER || '',
+  publicBaseUrl: (process.env.PUBLIC_BASE_URL || '').replace(/\/$/, ''),
+  resetTokenTtlMinutes: parseInt(process.env.RESET_TOKEN_TTL_MINUTES || '30', 10),
+  recoveryMaxPerIpPerHour: parseInt(process.env.RECOVERY_MAX_PER_IP_PER_HOUR || '5', 10),
 };
 
 // ---------------------------------------------------------------------------
@@ -451,6 +460,50 @@ function rateLimited(ip) {
   rec.n += 1;
   return rec.n > CFG.maxPerIpPerDay;
 }
+
+const recoveryHits = new Map();
+function recoveryRateLimited(ip, now = Date.now()) {
+  const hour = Math.floor(now / 3600000);
+  const rec = recoveryHits.get(ip);
+  if (!rec || rec.hour !== hour) {
+    recoveryHits.set(ip, { hour, n: 1 });
+    return false;
+  }
+  rec.n += 1;
+  return rec.n > CFG.recoveryMaxPerIpPerHour;
+}
+
+class ResetTokenStore {
+  constructor(ttlMinutes = 30) {
+    this.ttlMs = ttlMinutes * 60000;
+    this.tokens = new Map();
+  }
+  issue(accountId, username, now = Date.now()) {
+    const raw = crypto.randomBytes(32).toString('hex');
+    const hash = crypto.createHash('sha256').update(raw).digest('hex');
+    for (const [key, value] of this.tokens) {
+      if (value.accountId === accountId) this.tokens.delete(key);
+    }
+    this.tokens.set(hash, { accountId, username, expires: now + this.ttlMs });
+    return raw;
+  }
+  find(raw, now = Date.now()) {
+    if (!/^[0-9a-f]{64}$/i.test(String(raw || ''))) return null;
+    const hash = crypto.createHash('sha256').update(raw).digest('hex');
+    const record = this.tokens.get(hash);
+    if (!record) return null;
+    if (record.expires <= now) { this.tokens.delete(hash); return null; }
+    return { hash, ...record };
+  }
+  consume(raw, now = Date.now()) {
+    const record = this.find(raw, now);
+    if (!record) return null;
+    this.tokens.delete(record.hash);
+    delete record.hash;
+    return record;
+  }
+}
+const resetTokens = new ResetTokenStore(CFG.resetTokenTtlMinutes);
 
 // ---------------------------------------------------------------------------
 // HTTP
@@ -532,8 +585,70 @@ function renderForm({ errors = [], values = {}, notice = '' } = {}) {
 
     <button type="submit">Create account</button>
   </form>
-  <div class="foot">Use the same username and password in the game client.</div>
+  <div class="foot">Use the same username and password in the game client.<br><a href="/forgot-password" style="color:#c8a04a">Forgot your password?</a></div>
 </div></body></html>`;
+}
+
+function recoveryShell(title, body) {
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(title)}</title>
+<style>*{box-sizing:border-box}body{margin:0;min-height:100dvh;display:grid;place-items:center;background:#14110d url('/pandaria-background.jpg') center/cover fixed no-repeat;color:#f2eadc;font:16px/1.5 system-ui,-apple-system,Segoe UI,sans-serif;padding:24px;position:relative;isolation:isolate}body::before{content:'';position:fixed;inset:0;z-index:-1;background:linear-gradient(120deg,rgba(5,12,15,.75),rgba(10,18,16,.52),rgba(8,10,12,.75))}.card{width:100%;max-width:420px;background:rgba(25,22,17,.93);border:1px solid rgba(211,177,99,.36);border-radius:14px;padding:28px;box-shadow:0 18px 55px #000b}h1{margin:0 0 8px;font-size:22px}p{color:#bdb2a0}label{display:block;font-size:13px;color:#bdb2a0;margin:14px 0 5px}input{width:100%;padding:11px 12px;background:#14110d;color:#e8e0d0;border:1px solid #3a3128;border-radius:8px;font-size:16px}button{width:100%;margin-top:22px;padding:12px;font-size:15px;font-weight:600;color:#1a1610;background:#c8a04a;border:0;border-radius:8px;cursor:pointer}.errors{padding:12px;border-radius:8px;background:#3a1f1f;border:1px solid #6b3030;color:#f0c0c0}.notice{padding:12px;border-radius:8px;background:#1f3a24;border:1px solid #306b3a;color:#c0f0c8}a{color:#c8a04a}</style></head><body><div class="card">${body}</div></body></html>`;
+}
+
+function renderForgot({ notice = '', error = '' } = {}) {
+  const message = error ? `<div class="errors">${esc(error)}</div>` : notice ? `<div class="notice">${esc(notice)}</div>` : '';
+  return recoveryShell('Reset your password', `<h1>Reset your password</h1><p>Enter the username and email saved on the account.</p>${message}<form method="POST" action="/forgot-password"><label>Username</label><input name="username" maxlength="${MAX_USERNAME}" required><label>Email</label><input name="email" type="email" required><button type="submit">Send reset link</button></form><p><a href="/">Back to signup</a></p>`);
+}
+
+function renderReset(token, error = '') {
+  const message = error ? `<div class="errors">${esc(error)}</div>` : '';
+  return recoveryShell('Choose a new password', `<h1>Choose a new password</h1>${message}<form method="POST" action="/reset-password"><input type="hidden" name="token" value="${esc(token)}"><label>New password</label><input name="password" type="password" maxlength="16" required><label>New password again</label><input name="password2" type="password" maxlength="16" required><button type="submit">Change password</button></form>`);
+}
+
+function validateNewPassword(password, password2) {
+  const errors = validate('VALIDUSER', password, password2, '');
+  return errors.filter((e) => !e.startsWith('Username') && e !== 'Email is required.');
+}
+
+function smtpRead(socket) {
+  return new Promise((resolve, reject) => {
+    let buffer = '';
+    const onData = (chunk) => {
+      buffer += chunk.toString('utf8');
+      const lines = buffer.split(/\r?\n/).filter(Boolean);
+      const last = lines[lines.length - 1] || '';
+      if (/^\d{3} /.test(last)) { cleanup(); resolve({ code: Number(last.slice(0, 3)), text: lines.join('\n') }); }
+    };
+    const onError = (e) => { cleanup(); reject(e); };
+    const cleanup = () => { socket.off('data', onData); socket.off('error', onError); };
+    socket.on('data', onData); socket.on('error', onError);
+  });
+}
+async function smtpCommand(socket, command, accepted = [250]) {
+  if (command !== null) socket.write(command + '\r\n');
+  const reply = await smtpRead(socket);
+  if (!accepted.includes(reply.code)) throw new Error(`SMTP rejected command with ${reply.code}`);
+  return reply;
+}
+async function sendResetEmail(to, link) {
+  if (!CFG.smtpUser || !CFG.smtpPass || !CFG.mailFrom || !CFG.publicBaseUrl) throw new Error('Mail settings are incomplete');
+  let socket = net.createConnection({ host: CFG.smtpHost, port: CFG.smtpPort });
+  await smtpCommand(socket, null, [220]);
+  await smtpCommand(socket, `EHLO ${require('node:os').hostname()}`);
+  await smtpCommand(socket, 'STARTTLS', [220]);
+  socket = tls.connect({ socket, servername: CFG.smtpHost });
+  await new Promise((resolve, reject) => { socket.once('secureConnect', resolve); socket.once('error', reject); });
+  await smtpCommand(socket, `EHLO ${require('node:os').hostname()}`);
+  await smtpCommand(socket, 'AUTH LOGIN', [334]);
+  await smtpCommand(socket, Buffer.from(CFG.smtpUser).toString('base64'), [334]);
+  await smtpCommand(socket, Buffer.from(CFG.smtpPass).toString('base64'), [235]);
+  await smtpCommand(socket, `MAIL FROM:<${CFG.mailFrom}>`);
+  await smtpCommand(socket, `RCPT TO:<${to}>`, [250, 251]);
+  await smtpCommand(socket, 'DATA', [354]);
+  const subject = 'World of Warcraft password reset';
+  const message = [`From: ${CFG.mailFrom}`, `To: ${to}`, `Subject: ${subject}`, 'MIME-Version: 1.0', 'Content-Type: text/plain; charset=UTF-8', '', 'A password reset was requested for your game account.', '', link, '', `This link expires in ${CFG.resetTokenTtlMinutes} minutes. If you did not request it, ignore this email.`].join('\r\n').replace(/^\./gm, '..');
+  await smtpCommand(socket, message + '\r\n.', [250]);
+  socket.write('QUIT\r\n'); socket.end();
 }
 
 function renderDone(username) {
@@ -627,6 +742,19 @@ const DB = (() => {
     return r.rows.length > 0;
   }
 
+  async function accountForRecovery(username, email) {
+    const r = await conn.query(`SELECT id, username, email FROM account WHERE username = ${q(normalize(username))} AND email = ${q(email)} LIMIT 1`);
+    if (!r.rows.length) return null;
+    return { id: r.rows[0][0], username: r.rows[0][1], email: r.rows[0][2] };
+  }
+
+  async function updatePassword(accountId, username, password) {
+    const sets = [`sha_pass_hash = ${q(shaPassHash(username, password))}`];
+    if (cols.has('v')) sets.push("v = '0'");
+    if (cols.has('s')) sets.push("s = '0'");
+    await conn.query(`UPDATE account SET ${sets.join(', ')} WHERE id = ${Number(accountId)} LIMIT 1`);
+  }
+
   async function insertAccount({ username, hash, email, expansion }) {
     if (await usernameTaken(username)) return { ok: false, reason: 'taken' };
 
@@ -650,7 +778,7 @@ const DB = (() => {
     }
   }
 
-  return { preflight, insertAccount, get columns() { return cols; } };
+  return { preflight, insertAccount, accountForRecovery, updatePassword, get columns() { return cols; } };
 })();
 
 // ---------------------------------------------------------------------------
@@ -701,6 +829,63 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'GET' && url.pathname === '/health') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ ok: true })); return;
+  }
+
+  if (req.method === 'GET' && url.pathname === '/forgot-password') {
+    const r = page(renderForgot()); res.writeHead(r.status, r.headers); res.end(r.body); return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/forgot-password') {
+    let form;
+    try { form = new URLSearchParams(await readBody(req)); }
+    catch { const r = page(renderForgot({ error: 'That submission was too large.' }), 413); res.writeHead(r.status, r.headers); res.end(r.body); return; }
+    const generic = 'If that username and email match an account, a reset link has been sent.';
+    if (!recoveryRateLimited(ip)) {
+      const username = (form.get('username') || '').trim();
+      const email = (form.get('email') || '').trim();
+      if (USERNAME_RE.test(username) && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
+        try {
+          const account = await DB.accountForRecovery(username, email);
+          if (account) {
+            const token = resetTokens.issue(account.id, account.username);
+            const link = `${CFG.publicBaseUrl}/reset-password?token=${encodeURIComponent(token)}`;
+            await sendResetEmail(account.email, link);
+            console.log(`[recovery] reset mail accepted for account id ${account.id} from ${ip}`);
+          }
+        } catch (e) { console.error('[recovery] request failed:', e.message); }
+      }
+    }
+    const r = page(renderForgot({ notice: generic })); res.writeHead(r.status, r.headers); res.end(r.body); return;
+  }
+
+  if (req.method === 'GET' && url.pathname === '/reset-password') {
+    const token = url.searchParams.get('token') || '';
+    const valid = resetTokens.find(token);
+    const r = valid ? page(renderReset(token)) : page(recoveryShell('Reset link expired', '<h1>Reset link expired</h1><p>That link is invalid, expired, or was already used.</p><p><a href="/forgot-password">Request another link</a></p>'), 400);
+    res.writeHead(r.status, r.headers); res.end(r.body); return;
+  }
+
+  if (req.method === 'POST' && url.pathname === '/reset-password') {
+    let form;
+    try { form = new URLSearchParams(await readBody(req)); }
+    catch { res.writeHead(413, { 'Content-Type': 'text/plain' }); res.end('Too large'); return; }
+    const token = form.get('token') || '';
+    const password = form.get('password') || '';
+    const password2 = form.get('password2') || '';
+    const record = resetTokens.find(token);
+    if (!record) { const r = page(recoveryShell('Reset link expired', '<h1>Reset link expired</h1><p>That link is invalid, expired, or was already used.</p>'), 400); res.writeHead(r.status, r.headers); res.end(r.body); return; }
+    const errors = validateNewPassword(password, password2);
+    if (errors.length) { const r = page(renderReset(token, errors.join(' ')), 400); res.writeHead(r.status, r.headers); res.end(r.body); return; }
+    try {
+      await DB.updatePassword(record.accountId, record.username, password);
+      resetTokens.consume(token);
+      console.log(`[recovery] password changed for account id ${record.accountId} from ${ip}`);
+      const r = page(recoveryShell('Password changed', '<h1>Password changed</h1><p>Your new password is ready. You can log into the game now.</p><p><a href="/">Back to signup</a></p>'));
+      res.writeHead(r.status, r.headers); res.end(r.body); return;
+    } catch (e) {
+      console.error('[recovery] password update failed:', e.message);
+      const r = page(renderReset(token, 'The password could not be changed right now. Try again.'), 503); res.writeHead(r.status, r.headers); res.end(r.body); return;
+    }
   }
 
   if (req.method === 'POST' && url.pathname === '/signup') {
@@ -767,6 +952,10 @@ if (require.main === module) {
       console.error('DB_USER is not set. Refusing to start.');
       process.exit(1);
     }
+    if (CFG.requireEmail && (!CFG.smtpUser || !CFG.smtpPass || !CFG.mailFrom || !CFG.publicBaseUrl)) {
+      console.error('Recovery mail settings are incomplete. Set SMTP_USER, SMTP_PASS, MAIL_FROM, and PUBLIC_BASE_URL.');
+      process.exit(1);
+    }
     try {
       await DB.preflight();
       console.log(`schema ok — account table has: ${[...DB.columns].sort().join(', ')}`);
@@ -782,4 +971,4 @@ if (require.main === module) {
   })();
 }
 
-module.exports = { shaPassHash, normalize, validate, MAX_USERNAME };
+module.exports = { shaPassHash, normalize, validate, validateNewPassword, ResetTokenStore, MAX_USERNAME };
