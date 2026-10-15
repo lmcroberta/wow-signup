@@ -14,7 +14,8 @@
 const assert = require('node:assert');
 const {
   shaPassHash, normalize, validate, validateNewPassword, ResetTokenStore,
-  RealmStatusMonitor, renderForm, MAX_USERNAME, resolveExpansion,
+  RealmStatusMonitor, renderForm, renderWardrobe, wardrobeSlotsForInventoryType,
+  WARDROBE_VERSION, MAX_USERNAME, resolveExpansion,
 } = require('./server.js');
 
 let pass = 0;
@@ -252,6 +253,41 @@ check('the value handed to the INSERT is always a positive integer', () => {
     const v = resolveExpansion(raw);
     assert.ok(Number.isInteger(v) && v >= 1, `${JSON.stringify(raw)} produced ${v}`);
   }
+});
+
+// ---------------------------------------------------------------------------
+// 8. Wardrobe slot safety and release identification.
+// ---------------------------------------------------------------------------
+check('wardrobe version is visible and named in the rendered page', () => {
+  const html = renderWardrobe();
+  assert.strictEqual(WARDROBE_VERSION, '1.1.0');
+  assert.match(html, /v1\.1\.0/);
+  assert.match(html, /Blessings of Willa Rose/);
+});
+
+check('tabards route only to the tabard slot', () => {
+  assert.deepStrictEqual(wardrobeSlotsForInventoryType(19), ['tabard']);
+});
+
+check('head and neck items route to their own slots', () => {
+  assert.deepStrictEqual(wardrobeSlotsForInventoryType(1), ['head']);
+  assert.deepStrictEqual(wardrobeSlotsForInventoryType(2), ['neck']);
+});
+
+check('rings and trinkets expose both valid slots', () => {
+  assert.deepStrictEqual(wardrobeSlotsForInventoryType(11), ['finger1', 'finger2']);
+  assert.deepStrictEqual(wardrobeSlotsForInventoryType(12), ['trinket1', 'trinket2']);
+});
+
+check('unknown and non-equippable inventory types route nowhere', () => {
+  assert.deepStrictEqual(wardrobeSlotsForInventoryType(0), []);
+  assert.deepStrictEqual(wardrobeSlotsForInventoryType(99), []);
+});
+
+check('lookup handler checks inventory type before placing an item', () => {
+  const html = renderWardrobe();
+  assert.match(html, /targetSlotForInventoryType\(data\.inventoryType,source\)/);
+  assert.match(html, /Nothing was overwritten/);
 });
 
 // ---------------------------------------------------------------------------

@@ -869,6 +869,26 @@ function renderDone(username) {
 </div></body></html>`;
 }
 
+// Wardrobe release metadata. The version is visible on the page and every
+// release is recorded in CHANGELOG.md so the running image can be identified.
+const WARDROBE_VERSION = '1.1.0';
+const WARDROBE_RELEASE_NOTE = 'Realm items now route only to compatible equipment slots.';
+
+// WoW InventoryType -> wardrobe slot candidates. Rings and trinkets have two
+// legal destinations. Unknown and non-equippable types are rejected.
+const WARDROBE_INVTYPE_SLOTS = Object.freeze({
+  1:['head'], 2:['neck'], 3:['shoulders'], 4:['shirt'], 5:['chest'],
+  6:['waist'], 7:['legs'], 8:['feet'], 9:['wrists'], 10:['hands'],
+  11:['finger1','finger2'], 12:['trinket1','trinket2'],
+  13:['mainhand'], 14:['offhand'], 15:['ranged'], 16:['back'],
+  17:['mainhand'], 19:['tabard'], 20:['chest'], 21:['mainhand'],
+  22:['offhand'], 23:['offhand'], 25:['ranged'], 26:['ranged'], 28:['ranged'],
+});
+function wardrobeSlotsForInventoryType(value) {
+  const slots = WARDROBE_INVTYPE_SLOTS[Number(value)];
+  return slots ? slots.slice() : [];
+}
+
 // ---------------------------------------------------------------------------
 // Willow Rose Wardrobe — standalone page served at /wardrobe, linked from the
 // bottom of the signup card. Vanilla JS port of the assistant app (same
@@ -880,7 +900,7 @@ function renderWardrobe() {
   return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Willow Rose Wardrobe</title>
+<title>Willa Rose Wardrobe</title>
 <style>
 :root{font-family:Georgia,'Times New Roman',serif;color:#ece9e2;background:#0c0e10;--gold:#b79a5c;--gold2:#e3cf91;--ink:#0c0e10;--panel:#16191d;--line:#373a3d;--muted:#979b9f;--paper:#ece9e2}
 *{box-sizing:border-box}body{margin:0;min-width:320px;min-height:100dvh;background:radial-gradient(circle at 48% 20%,#2d3135 0,#14171a 34%,#090b0d 80%);color:#ece9e2}
@@ -944,7 +964,7 @@ footer{position:relative;z-index:1;display:flex;justify-content:space-between;al
 <body><main class="shell">
 <div class="grain" aria-hidden="true"></div>
 <header class="masthead">
-  <div><div class="kicker">Private Realm Atelier</div><input class="set-name" id="set-name" value="Blessing of Willow Rose" aria-label="Set name"></div>
+  <div><div class="kicker">Private Realm Atelier</div><input class="set-name" id="set-name" value="Blessings of Willa Rose" aria-label="Set name"></div>
   <div class="header-stats"><div><b id="stat-equipped">0</b><span>of 19 slots</span></div><div><b id="stat-nextid">135,000</b><span>next item ID</span></div><a class="home-link" href="/"><i></i>Back to signup</a></div>
 </header>
 <section class="workbench">
@@ -966,16 +986,19 @@ footer{position:relative;z-index:1;display:flex;justify-content:space-between;al
     <div class="inspector-title"><span id="insp-short">BK</span><div><small>Editing slot</small><h2 id="insp-label">Back</h2></div></div>
     <label>Custom item ID<input inputmode="numeric" id="f-id" placeholder="135000"></label>
     <button class="lookup" id="btn-lookup" type="button">Look up item</button>
-    <label>Item name<input id="f-name" placeholder="Blessing of Willow Rose"></label>
+    <label>Item name<input id="f-name" placeholder="Crown of Willa Rose"></label>
     <div class="two-up"><label>Quality<select id="f-quality"><option>Legendary</option><option selected>Epic</option><option>Rare</option><option>Uncommon</option><option>Common</option></select></label><label>Donor ID<input inputmode="numeric" id="f-donor" placeholder="Optional"></label></div>
     <label>Design notes<textarea id="f-notes" placeholder="Appearance, scaling rule, source item…"></textarea></label>
     <div class="inspector-actions"><button class="secondary" id="btn-clear" type="button">Clear slot</button><button id="btn-save" type="button">Save piece</button></div>
   </aside>
 </section>
-<footer><div class="status"><i id="status-dot"></i><span id="status-text">Ready</span></div><div><button class="footer-btn" id="btn-export" type="button">Export set</button><button class="footer-btn danger" id="btn-reset" type="button">Reset</button></div></footer>
+<footer><div class="status"><i id="status-dot"></i><span id="status-text">Ready</span></div><div><button class="footer-btn" id="btn-version" type="button">v${esc(WARDROBE_VERSION)}</button><button class="footer-btn" id="btn-export" type="button">Export set</button><button class="footer-btn danger" id="btn-reset" type="button">Reset</button></div></footer>
 </main>
 <script>
 'use strict';
+var WARDROBE_VERSION = ${JSON.stringify(WARDROBE_VERSION)};
+var WARDROBE_RELEASE_NOTE = ${JSON.stringify(WARDROBE_RELEASE_NOTE)};
+var INVTYPE_SLOTS = ${JSON.stringify(WARDROBE_INVTYPE_SLOTS)};
 var SLOTS = [
   {key:'head',label:'Head',short:'HD',side:'L'},{key:'neck',label:'Neck',short:'NK',side:'L'},
   {key:'shoulders',label:'Shoulders',short:'SH',side:'L'},{key:'back',label:'Back',short:'BK',side:'L'},
@@ -992,12 +1015,25 @@ function blank(){ return {id:'',name:'',quality:'Epic',donor:'',notes:''}; }
 function emptyWardrobe(){ var w={}; for (var i=0;i<SLOTS.length;i++) w[SLOTS[i].key]=blank(); return w; }
 function loadGear(){ try { var g=JSON.parse(localStorage.getItem('willow-wardrobe-gear')||'null'); if (g && typeof g==='object') { for (var i=0;i<SLOTS.length;i++) if (!g[SLOTS[i].key]) g[SLOTS[i].key]=blank(); return g; } } catch(e){} return emptyWardrobe(); }
 var gear = loadGear();
-var setName = 'Blessing of Willow Rose';
-try { var saved=localStorage.getItem('willow-wardrobe-name'); if (saved) setName=saved; } catch(e){}
+var setName = 'Blessings of Willa Rose';
+try {
+  var saved=localStorage.getItem('willow-wardrobe-name');
+  if (saved) setName=(saved==='Blessing of Willow Rose'?'Blessings of Willa Rose':saved);
+} catch(e){}
 var selected = 'back';
 var dbEverWorked = false;
 function $(id){ return document.getElementById(id); }
 function slotByKey(k){ for (var i=0;i<SLOTS.length;i++) if (SLOTS[i].key===k) return SLOTS[i]; return SLOTS[0]; }
+function targetSlotForInventoryType(type,current){
+  var choices=INVTYPE_SLOTS[String(Number(type))]||[];
+  if (!choices.length) return '';
+  if (choices.indexOf(current)!==-1) return current;
+  for (var i=0;i<choices.length;i++){
+    var candidate=gear[choices[i]];
+    if (!candidate || !candidate.id || !String(candidate.id).trim()) return choices[i];
+  }
+  return choices[0];
+}
 function fmt(n){ return Number(n).toLocaleString('en-US'); }
 function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 function save(){ try { localStorage.setItem('willow-wardrobe-gear',JSON.stringify(gear)); localStorage.setItem('willow-wardrobe-name',setName); } catch(e){} }
@@ -1055,8 +1091,33 @@ $('btn-lookup').addEventListener('click',function(){
       var data=null; try { data=JSON.parse(xhr.responseText); } catch(e){}
       if (data && data.found){
         dbEverWorked=true;
-        patch({name:data.name||it.name,quality:data.quality||it.quality,donor:it.donor||String(data.displayId||'')});
-        statusDot('#7eaa82'); status('Loaded "'+(data.name||'item')+'" from the realm database');
+        var source=selected;
+        var lookedUpId=String(it.id);
+        var target=targetSlotForInventoryType(data.inventoryType,source);
+        if (!target){
+          if (gear[source] && String(gear[source].id)===lookedUpId) gear[source]=blank();
+          save();
+          statusDot('#8d4e46');
+          status('"'+(data.name||'Item')+'" is not an equippable wardrobe item. Nothing was placed.');
+        } else {
+          var existing=gear[target];
+          var occupied=target!==source && existing && existing.id && String(existing.id).trim();
+          if (occupied){
+            if (gear[source] && String(gear[source].id)===lookedUpId) gear[source]=blank();
+            save();
+            statusDot('#8d4e46');
+            status(slotByKey(target).label+' is already filled. Nothing was overwritten.');
+          } else {
+            var moved=target!==source;
+            var donor=it.donor||String(data.displayId||'');
+            if (moved && gear[source] && String(gear[source].id)===lookedUpId) gear[source]=blank();
+            selected=target;
+            gear[target]={id:lookedUpId,name:data.name||it.name,quality:data.quality||it.quality,donor:donor,notes:it.notes||''};
+            save();
+            statusDot('#7eaa82');
+            status('Loaded "'+(data.name||'item')+'" into '+slotByKey(target).label+(moved?' — corrected from '+slotByKey(source).label:''));
+          }
+        }
       } else {
         statusDot('#8d4e46'); status('Item '+it.id+' is not in the realm database yet. You can still name it manually.');
       }
@@ -1068,6 +1129,7 @@ $('btn-lookup').addEventListener('click',function(){
   xhr.onerror=function(){ statusDot('#8d4e46'); status('Realm database is not reachable right now. You can still name the item manually.'); renderAll(); };
   xhr.send();
 });
+$('btn-version').addEventListener('click',function(){ status('v'+WARDROBE_VERSION+' — '+WARDROBE_RELEASE_NOTE); });
 $('btn-clear').addEventListener('click',function(){ var s=slotByKey(selected); gear[selected]=blank(); save(); status(s.label+' cleared'); renderAll(); });
 $('btn-save').addEventListener('click',function(){ save(); var s=slotByKey(selected); status(s.label+' saved'); renderAll(); });
 $('btn-reset').addEventListener('click',function(){ if (!window.confirm('Clear every slot in this wardrobe set?')) return; gear=emptyWardrobe(); save(); status('Wardrobe cleared'); renderAll(); });
@@ -1452,4 +1514,4 @@ if (require.main === module) {
   })();
 }
 
-module.exports = { shaPassHash, normalize, validate, validateNewPassword, ResetTokenStore, RealmStatusMonitor, renderForm, renderWardrobe, MAX_USERNAME, resolveExpansion, EXPANSION_DEFAULT };
+module.exports = { shaPassHash, normalize, validate, validateNewPassword, ResetTokenStore, RealmStatusMonitor, renderForm, renderWardrobe, wardrobeSlotsForInventoryType, WARDROBE_VERSION, MAX_USERNAME, resolveExpansion, EXPANSION_DEFAULT };

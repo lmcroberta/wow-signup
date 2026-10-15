@@ -1,6 +1,6 @@
-# WoW self-serve registration page
+# WoW self-serve registration page and Willa Rose Wardrobe
 
-**Status: BUILT AND TESTED. Nothing deployed, nothing on Robert's machines touched.**
+**Current wardrobe version: 1.1.0.** Release history is recorded in `CHANGELOG.md`.
 
 Written Oct 1, 2026 for Robert's EmuCoach TrinityCore 5.4.8 (MoP) realm, because Tyler
 wants people to be able to sign up without an admin creating accounts by hand.
