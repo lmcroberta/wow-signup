@@ -874,8 +874,8 @@ function renderDone(username) {
 
 // Wardrobe release metadata. The version is visible on the page and every
 // release is recorded in CHANGELOG.md so the running image can be identified.
-const WARDROBE_VERSION = '1.2.2';
-const WARDROBE_RELEASE_NOTE = 'Fixed quartermaster spawn-column detection for this realm repack.';
+const WARDROBE_VERSION = '1.2.3';
+const WARDROBE_RELEASE_NOTE = 'Kept the quartermaster repair clone inside the permitted world schema.';
 
 // WoW InventoryType -> wardrobe slot candidates. Rings and trinkets have two
 // legal destinations. Unknown and non-equippable types are rejected.
@@ -1350,14 +1350,14 @@ const DB = (() => {
         `DELETE FROM \`${schema}\`.creature WHERE \`${spawnId}\` = ${QUARTERMASTER.customEntry}`
       );
       await conn.query(`DELETE FROM \`${schema}\`.npc_vendor WHERE entry = ${QUARTERMASTER.customEntry}`);
-      await conn.query(`DROP TEMPORARY TABLE IF EXISTS tmp_world_bridge_quartermaster`);
-      await conn.query(`CREATE TEMPORARY TABLE tmp_world_bridge_quartermaster LIKE \`${schema}\`.creature_template`);
+      await conn.query(`DROP TEMPORARY TABLE IF EXISTS \`${schema}\`.tmp_world_bridge_quartermaster`);
+      await conn.query(`CREATE TEMPORARY TABLE \`${schema}\`.tmp_world_bridge_quartermaster LIKE \`${schema}\`.creature_template`);
       await conn.query(
-        `INSERT INTO tmp_world_bridge_quartermaster
+        `INSERT INTO \`${schema}\`.tmp_world_bridge_quartermaster
          SELECT * FROM \`${schema}\`.creature_template WHERE entry = ${QUARTERMASTER.donorEntry}`
       );
       await conn.query(
-        `UPDATE tmp_world_bridge_quartermaster
+        `UPDATE \`${schema}\`.tmp_world_bridge_quartermaster
          SET entry = ${QUARTERMASTER.customEntry},
              name = 'BuckmanHoldings Quartermaster',
              subname = 'Guild Quartermaster'
@@ -1366,9 +1366,9 @@ const DB = (() => {
       await conn.query(`DELETE FROM \`${schema}\`.creature_template WHERE entry = ${QUARTERMASTER.customEntry}`);
       await conn.query(
         `INSERT INTO \`${schema}\`.creature_template
-         SELECT * FROM tmp_world_bridge_quartermaster WHERE entry = ${QUARTERMASTER.customEntry}`
+         SELECT * FROM \`${schema}\`.tmp_world_bridge_quartermaster WHERE entry = ${QUARTERMASTER.customEntry}`
       );
-      await conn.query(`DROP TEMPORARY TABLE IF EXISTS tmp_world_bridge_quartermaster`);
+      await conn.query(`DROP TEMPORARY TABLE IF EXISTS \`${schema}\`.tmp_world_bridge_quartermaster`);
       await conn.query(
         `INSERT INTO \`${schema}\`.npc_vendor
            (entry, slot, item, maxcount, incrtime, ExtendedCost, type)

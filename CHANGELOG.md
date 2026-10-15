@@ -1,5 +1,10 @@
 # WoW Signup and Willa Rose Wardrobe changelog
 
+## 1.2.3 — 2026-10-15
+
+- Fixed the quartermaster hard reset so its temporary clone table is created inside the discovered world schema instead of the default auth schema.
+- Added regression coverage so the scoped world account never needs temporary-table privileges on auth.
+
 ## 1.2.2 — 2026-10-15
 
 - Fixed the quartermaster bridge on repacks where the signup account can read `world.creature` but cannot see its columns through `information_schema.COLUMNS`.

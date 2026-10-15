@@ -263,8 +263,8 @@ check('the value handed to the INSERT is always a positive integer', () => {
 // ---------------------------------------------------------------------------
 check('wardrobe version is visible and named in the rendered page', () => {
   const html = renderWardrobe();
-  assert.strictEqual(WARDROBE_VERSION, '1.2.2');
-  assert.match(html, /v1\.2\.2/);
+  assert.strictEqual(WARDROBE_VERSION, '1.2.3');
+  assert.match(html, /v1\.2\.3/);
   assert.match(html, /Blessings of Willa Rose/);
 });
 
@@ -335,6 +335,12 @@ check('world bridge probes creature directly instead of relying on information_s
   const source = fs.readFileSync(path.join(__dirname, 'server.js'), 'utf8');
   assert.match(source, /SELECT \* FROM \\`\$\{schema\}\\`\.creature LIMIT 0/);
   assert.doesNotMatch(source, /TABLE_NAME = 'creature'[\s\S]{0,120}COLUMN_NAME IN \('id', 'id1'\)/);
+});
+
+check('quartermaster clone temp table stays inside the discovered world schema', () => {
+  const source = fs.readFileSync(path.join(__dirname, 'server.js'), 'utf8');
+  assert.match(source, /CREATE TEMPORARY TABLE \\`\$\{schema\}\\`\.tmp_world_bridge_quartermaster/);
+  assert.doesNotMatch(source, /CREATE TEMPORARY TABLE tmp_world_bridge_quartermaster/);
 });
 
 // ---------------------------------------------------------------------------
