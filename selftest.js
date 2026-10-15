@@ -263,8 +263,8 @@ check('the value handed to the INSERT is always a positive integer', () => {
 // ---------------------------------------------------------------------------
 check('wardrobe version is visible and named in the rendered page', () => {
   const html = renderWardrobe();
-  assert.strictEqual(WARDROBE_VERSION, '1.2.3');
-  assert.match(html, /v1\.2\.3/);
+  assert.strictEqual(WARDROBE_VERSION, '1.2.4');
+  assert.match(html, /v1\.2\.4/);
   assert.match(html, /Blessings of Willa Rose/);
 });
 
@@ -309,8 +309,8 @@ check('world bridge accepts the correct bearer token', () => {
   assert.strictEqual(bridgeAuthorized('Bearer ' + token, expected), true);
 });
 
-check('world bridge is hard-scoped to the custom quartermaster, donor, and tabard', () => {
-  assert.deepStrictEqual(QUARTERMASTER, { customEntry: 9100002, donorEntry: 59908, tabardEntry: 135000 });
+check('world bridge is hard-scoped to the old, fresh, donor, and tabard entries', () => {
+  assert.deepStrictEqual(QUARTERMASTER, { customEntry: 9100002, freshEntry: 9100003, donorEntry: 59908, tabardEntry: 135000 });
 });
 
 check('world bridge awaits its snapshot before sending 200 headers', () => {
@@ -341,6 +341,14 @@ check('quartermaster clone temp table stays inside the discovered world schema',
   const source = fs.readFileSync(path.join(__dirname, 'server.js'), 'utf8');
   assert.match(source, /CREATE TEMPORARY TABLE \\`\$\{schema\}\\`\.tmp_world_bridge_quartermaster/);
   assert.doesNotMatch(source, /CREATE TEMPORARY TABLE tmp_world_bridge_quartermaster/);
+});
+
+check('fresh quartermaster action is fixed to entry 9100003 and visible donor 59908', () => {
+  const source = fs.readFileSync(path.join(__dirname, 'server.js'), 'utf8');
+  assert.match(source, /create-9100003-from-59908/);
+  assert.match(source, /entry = \$\{QUARTERMASTER\.freshEntry\}/);
+  assert.match(source, /name = 'BuckmanHoldings Quartermaster'/);
+  assert.match(source, /VALUES \(\$\{QUARTERMASTER\.freshEntry\}, 0, \$\{QUARTERMASTER\.tabardEntry\}/);
 });
 
 // ---------------------------------------------------------------------------

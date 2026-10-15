@@ -1,5 +1,10 @@
 # WoW Signup and Willa Rose Wardrobe changelog
 
+## 1.2.4 — 2026-10-15
+
+- Added a fixed bridge operation that creates fresh quartermaster entry 9,100,003 as a byte-for-byte clone of visible donor Jaluu, changing only its entry, name, and subname.
+- The operation clears only entry 9,100,003 spawns and stock, then stocks tabard 135,000 and returns verification rows.
+
 ## 1.2.3 — 2026-10-15
 
 - Fixed the quartermaster hard reset so its temporary clone table is created inside the discovered world schema instead of the default auth schema.

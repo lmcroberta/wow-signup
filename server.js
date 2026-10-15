@@ -874,8 +874,8 @@ function renderDone(username) {
 
 // Wardrobe release metadata. The version is visible on the page and every
 // release is recorded in CHANGELOG.md so the running image can be identified.
-const WARDROBE_VERSION = '1.2.3';
-const WARDROBE_RELEASE_NOTE = 'Kept the quartermaster repair clone inside the permitted world schema.';
+const WARDROBE_VERSION = '1.2.4';
+const WARDROBE_RELEASE_NOTE = 'Added a fresh quartermaster clone at entry 9,100,003.';
 
 // WoW InventoryType -> wardrobe slot candidates. Rings and trinkets have two
 // legal destinations. Unknown and non-equippable types are rejected.
@@ -1336,6 +1336,69 @@ const DB = (() => {
     };
   }
 
+  async function createFreshQuartermaster() {
+    const schema = await worldSchema();
+    const spawnId = await creatureSpawnIdColumn(schema);
+    const donor = await conn.query(
+      `SELECT entry FROM \`${schema}\`.creature_template WHERE entry = ${QUARTERMASTER.donorEntry} LIMIT 1`
+    );
+    if (!donor.rows.length) throw new Error('Visible donor creature 59908 does not exist.');
+
+    await conn.query('START TRANSACTION');
+    try {
+      const removedSpawns = await conn.query(
+        `DELETE FROM \`${schema}\`.creature WHERE \`${spawnId}\` = ${QUARTERMASTER.freshEntry}`
+      );
+      await conn.query(`DELETE FROM \`${schema}\`.npc_vendor WHERE entry = ${QUARTERMASTER.freshEntry}`);
+      await conn.query(`DROP TEMPORARY TABLE IF EXISTS \`${schema}\`.tmp_world_bridge_fresh_quartermaster`);
+      await conn.query(`CREATE TEMPORARY TABLE \`${schema}\`.tmp_world_bridge_fresh_quartermaster LIKE \`${schema}\`.creature_template`);
+      await conn.query(
+        `INSERT INTO \`${schema}\`.tmp_world_bridge_fresh_quartermaster
+         SELECT * FROM \`${schema}\`.creature_template WHERE entry = ${QUARTERMASTER.donorEntry}`
+      );
+      await conn.query(
+        `UPDATE \`${schema}\`.tmp_world_bridge_fresh_quartermaster
+         SET entry = ${QUARTERMASTER.freshEntry},
+             name = 'BuckmanHoldings Quartermaster',
+             subname = 'Guild Quartermaster'
+         WHERE entry = ${QUARTERMASTER.donorEntry}`
+      );
+      await conn.query(`DELETE FROM \`${schema}\`.creature_template WHERE entry = ${QUARTERMASTER.freshEntry}`);
+      await conn.query(
+        `INSERT INTO \`${schema}\`.creature_template
+         SELECT * FROM \`${schema}\`.tmp_world_bridge_fresh_quartermaster WHERE entry = ${QUARTERMASTER.freshEntry}`
+      );
+      await conn.query(`DROP TEMPORARY TABLE IF EXISTS \`${schema}\`.tmp_world_bridge_fresh_quartermaster`);
+      await conn.query(
+        `INSERT INTO \`${schema}\`.npc_vendor
+           (entry, slot, item, maxcount, incrtime, ExtendedCost, type)
+         VALUES (${QUARTERMASTER.freshEntry}, 0, ${QUARTERMASTER.tabardEntry}, 0, 0, 0, 1)`
+      );
+      await conn.query('COMMIT');
+
+      const template = await conn.query(
+        `SELECT * FROM \`${schema}\`.creature_template WHERE entry = ${QUARTERMASTER.freshEntry}`
+      );
+      const spawns = await conn.query(
+        `SELECT * FROM \`${schema}\`.creature WHERE \`${spawnId}\` = ${QUARTERMASTER.freshEntry} ORDER BY guid`
+      );
+      const stock = await conn.query(
+        `SELECT * FROM \`${schema}\`.npc_vendor WHERE entry = ${QUARTERMASTER.freshEntry} ORDER BY slot, item`
+      );
+      return {
+        ok: true,
+        entry: QUARTERMASTER.freshEntry,
+        removedSpawns: removedSpawns.affectedRows,
+        template: resultObjects(template),
+        spawns: resultObjects(spawns),
+        stock: resultObjects(stock),
+      };
+    } catch (e) {
+      try { await conn.query('ROLLBACK'); } catch {}
+      throw e;
+    }
+  }
+
   async function resetQuartermaster() {
     const schema = await worldSchema();
     const spawnId = await creatureSpawnIdColumn(schema);
@@ -1384,7 +1447,7 @@ const DB = (() => {
 
   return {
     preflight, insertAccount, accountForRecovery, updatePassword, wardrobeItem,
-    quartermasterSnapshot, resetQuartermaster,
+    quartermasterSnapshot, resetQuartermaster, createFreshQuartermaster,
     get columns() { return cols; },
   };
 })();
@@ -1397,7 +1460,7 @@ const DB = (() => {
 //   2. hard-reset custom entry 9100002 from visible donor 59908.
 // No caller-controlled table, column, or SQL fragment ever reaches MySQL.
 // ---------------------------------------------------------------------------
-const QUARTERMASTER = Object.freeze({ customEntry: 9100002, donorEntry: 59908, tabardEntry: 135000 });
+const QUARTERMASTER = Object.freeze({ customEntry: 9100002, freshEntry: 9100003, donorEntry: 59908, tabardEntry: 135000 });
 
 function bridgeAuthorized(headerValue, expectedHash = CFG.worldBridgeTokenSha256) {
   if (!/^[0-9a-f]{64}$/.test(expectedHash)) return false;
@@ -1501,11 +1564,13 @@ const server = http.createServer(async (req, res) => {
         let payload;
         try { payload = JSON.parse(await readBody(req, 1024)); }
         catch { res.writeHead(400); res.end(JSON.stringify({ error: 'Invalid JSON' })); return; }
-        if (!payload || payload.action !== 'hard-reset-9100002-from-59908') {
+        if (!payload || !['hard-reset-9100002-from-59908', 'create-9100003-from-59908'].includes(payload.action)) {
           res.writeHead(400); res.end(JSON.stringify({ error: 'Unsupported action' })); return;
         }
-        const result = await DB.resetQuartermaster();
-        console.log(`[world-bridge] hard-reset creature ${QUARTERMASTER.customEntry} from donor ${QUARTERMASTER.donorEntry}; removed ${result.removedSpawns} spawn(s)`);
+        const result = payload.action === 'create-9100003-from-59908'
+          ? await DB.createFreshQuartermaster()
+          : await DB.resetQuartermaster();
+        console.log(`[world-bridge] ${payload.action}; removed ${result.removedSpawns} spawn(s)`);
         res.writeHead(200); res.end(JSON.stringify(result)); return;
       }
       res.writeHead(405, { Allow: 'GET, POST' }); res.end(JSON.stringify({ error: 'Method not allowed' })); return;
