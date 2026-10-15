@@ -755,7 +755,7 @@ function renderForm({ errors = [], values = {}, notice = '' } = {}) {
 
     <button type="submit">Create account</button>
   </form>
-  <div class="foot">Use the same username and password in the game client.<br><a href="/forgot-password" style="color:#c8a04a">Forgot your password?</a></div>
+  <div class="foot">Use the same username and password in the game client.<br><a href="/forgot-password" style="color:#c8a04a">Forgot your password?</a> &middot; <a href="/wardrobe" style="color:#c8a04a">Wardrobe</a></div>
 </div>
 <script>
 (() => {
@@ -870,6 +870,221 @@ function renderDone(username) {
 }
 
 // ---------------------------------------------------------------------------
+// Willow Rose Wardrobe — standalone page served at /wardrobe, linked from the
+// bottom of the signup card. Vanilla JS port of the assistant app (same
+// localStorage keys, so data carries over between the two). The only server
+// call is the read-only /wardrobe-item lookup; everything else lives in the
+// browser. No MySQL credentials ever reach this page.
+// ---------------------------------------------------------------------------
+function renderWardrobe() {
+  return `<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Willow Rose Wardrobe</title>
+<style>
+:root{font-family:Georgia,'Times New Roman',serif;color:#ece9e2;background:#0c0e10;--gold:#b79a5c;--gold2:#e3cf91;--ink:#0c0e10;--panel:#16191d;--line:#373a3d;--muted:#979b9f;--paper:#ece9e2}
+*{box-sizing:border-box}body{margin:0;min-width:320px;min-height:100dvh;background:radial-gradient(circle at 48% 20%,#2d3135 0,#14171a 34%,#090b0d 80%);color:#ece9e2}
+.shell{position:relative;min-height:100dvh;padding:max(18px,env(safe-area-inset-top)) max(18px,env(safe-area-inset-right)) max(18px,env(safe-area-inset-bottom)) max(18px,env(safe-area-inset-left));overflow:hidden}
+.grain{position:fixed;inset:0;opacity:.17;pointer-events:none;background-image:url("data:image/svg+xml,%3Csvg viewBox='0 0 180 180' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.18'/%3E%3C/svg%3E")}
+.masthead{position:relative;z-index:1;display:flex;justify-content:space-between;gap:24px;align-items:end;padding:10px 4px 22px;border-bottom:1px solid #ffffff22}
+.kicker{text-transform:uppercase;letter-spacing:.28em;font:700 10px/1.4 ui-monospace,SFMono-Regular,Consolas,monospace;color:var(--gold2)}
+.set-name{display:block;width:min(620px,52vw);margin-top:5px;padding:0;border:0;background:transparent;color:var(--paper);font:italic 700 clamp(28px,4vw,54px)/1.05 Georgia,serif;outline:none}
+.header-stats{display:flex;gap:22px;align-items:center}
+.header-stats>div{display:flex;flex-direction:column;align-items:flex-end}
+.header-stats b{font-size:19px;color:var(--gold2)}
+.header-stats span{font:10px ui-monospace,SFMono-Regular,Consolas,monospace;color:var(--muted);text-transform:uppercase;letter-spacing:.09em}
+.home-link{min-height:44px;border:1px solid #555;background:#111418;color:#d7d4cd;border-radius:999px;padding:0 15px;display:flex;gap:9px;align-items:center;font:700 12px ui-monospace,SFMono-Regular,Consolas,monospace;cursor:pointer;text-decoration:none}
+.home-link i{display:block;width:8px;height:8px;border-radius:50%;background:#b79a5c}
+.workbench{position:relative;z-index:1;display:grid;grid-template-columns:minmax(175px,.78fr) minmax(320px,1.55fr) minmax(175px,.78fr) minmax(275px,1.05fr);gap:14px;min-height:650px;padding:18px 0}
+.slot-column{display:flex;flex-direction:column;gap:8px;justify-content:center}
+.slot{position:relative;display:flex;align-items:center;gap:10px;min-height:58px;width:100%;padding:7px;border:1px solid #34373b;background:linear-gradient(115deg,#1c2024,#121518);color:var(--paper);text-align:left;cursor:pointer;transition:transform .16s,border-color .16s,background .16s;font-family:Georgia,serif}
+.slot:before{content:'';position:absolute;inset:3px;border:1px solid transparent;pointer-events:none}
+.slot:hover{transform:translateY(-1px);border-color:#6c6556}
+.slot.active{border-color:var(--gold);background:linear-gradient(115deg,#29261f,#151719)}
+.slot.active:before{border-color:#b79a5c33}
+.slot.filled .slot-icon{color:#181818;background:linear-gradient(145deg,var(--gold2),#816a39)}
+.slot-icon{width:42px;height:42px;flex:0 0 42px;display:grid;place-items:center;border:1px solid #65605a;background:#0e1012;color:#8e9296;font:700 11px ui-monospace,SFMono-Regular,Consolas,monospace;clip-path:polygon(12% 0,88% 0,100% 12%,100% 88%,88% 100%,12% 100%,0 88%,0 12%)}
+.slot-copy{min-width:0;display:flex;flex-direction:column;gap:3px}
+.slot-copy b{font-size:13px;letter-spacing:.03em}
+.slot-copy small{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--muted);font:10px ui-monospace,SFMono-Regular,Consolas,monospace}
+.doll-stage{position:relative;min-height:650px;border-left:1px solid #ffffff12;border-right:1px solid #ffffff12;display:flex;flex-direction:column;align-items:center;justify-content:center;overflow:hidden}
+.halo{position:absolute;width:min(46vw,520px);aspect-ratio:1;border-radius:50%;border:1px solid #b79a5c3b;background:radial-gradient(circle,#d7ccb315 0,#d7ccb308 48%,transparent 70%);box-shadow:inset 0 0 90px #b79a5c0d}
+.halo:after,.halo:before{content:'';position:absolute;inset:9%;border:1px solid #b79a5c24;transform:rotate(45deg)}
+.halo:after{inset:22%;transform:rotate(22.5deg)}
+.sigil{position:absolute;top:8%;font:italic 700 clamp(80px,11vw,150px) Georgia,serif;color:#ffffff08;letter-spacing:-.12em}
+.silhouette{position:relative;z-index:2;width:min(45%,270px);max-height:500px;filter:drop-shadow(0 18px 35px #000);opacity:.78}
+.doll-copy{position:relative;z-index:3;margin-top:-22px;text-align:center}
+.doll-copy span{display:block;color:var(--gold2);font:italic 15px Georgia,serif}
+.doll-copy strong{display:block;margin-top:4px;color:#a5a7aa;font:10px ui-monospace,SFMono-Regular,Consolas,monospace;text-transform:uppercase;letter-spacing:.16em}
+.weapon-row{position:absolute;z-index:4;bottom:10px;left:10px;right:10px;display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.slot.compact{min-height:52px}
+.slot.compact .slot-icon{width:35px;height:35px;flex-basis:35px}
+.inspector{align-self:stretch;padding:20px;border:1px solid #3b3b38;background:linear-gradient(150deg,#1e2021ee,#111315f5);box-shadow:0 18px 50px #0008}
+.inspector-title{display:flex;align-items:center;gap:13px;margin-bottom:22px;padding-bottom:16px;border-bottom:1px solid #ffffff15}
+.inspector-title>span{width:54px;height:54px;display:grid;place-items:center;border:1px solid var(--gold);color:var(--gold2);font:700 13px ui-monospace,SFMono-Regular,Consolas,monospace;transform:rotate(45deg)}
+.inspector-title small{font:10px ui-monospace,SFMono-Regular,Consolas,monospace;text-transform:uppercase;letter-spacing:.13em;color:var(--muted)}
+.inspector-title h2{margin:2px 0 0;font-size:24px;font-style:italic}
+.inspector label{display:block;margin:0 0 14px;color:#b9b6af;font:10px ui-monospace,SFMono-Regular,Consolas,monospace;text-transform:uppercase;letter-spacing:.1em}
+.inspector input,.inspector select,.inspector textarea{display:block;width:100%;min-height:44px;margin-top:7px;border:1px solid #414449;border-radius:0;background:#0d0f11;color:var(--paper);padding:11px;font:16px Georgia,serif;outline:none}
+.inspector input:focus,.inspector select:focus,.inspector textarea:focus{border-color:var(--gold);box-shadow:0 0 0 2px #b79a5c1f}
+.inspector textarea{min-height:92px;resize:vertical}
+.two-up{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.lookup,.inspector-actions button,.footer-btn{min-height:44px;border:1px solid var(--gold);background:var(--gold);color:#161616;padding:0 14px;font:700 11px ui-monospace,SFMono-Regular,Consolas,monospace;text-transform:uppercase;letter-spacing:.07em;cursor:pointer}
+.lookup{width:100%;margin:-5px 0 16px;background:transparent;color:var(--gold2)}
+.inspector-actions{display:grid;grid-template-columns:1fr 1.3fr;gap:8px;margin-top:4px}
+.inspector-actions .secondary{background:transparent;color:#c4c1ba;border-color:#4a4c4f}
+footer{position:relative;z-index:1;display:flex;justify-content:space-between;align-items:center;padding:15px 4px 2px;border-top:1px solid #ffffff22}
+.status{display:flex;align-items:center;gap:9px;color:#aaa69f;font:11px ui-monospace,SFMono-Regular,Consolas,monospace}
+.status i{display:block;width:8px;height:8px;border-radius:50%;background:#b79a5c;box-shadow:0 0 12px #b79a5c}
+.footer-btn{background:transparent;color:var(--gold2);margin-left:8px}
+.footer-btn.danger{border-color:#704941;color:#c98a7e}
+@media(max-width:1100px){.workbench{grid-template-columns:minmax(150px,.8fr) minmax(300px,1.4fr) minmax(260px,1fr)}.slot-column.right{display:none}.doll-stage{min-height:610px}.inspector{grid-column:3}.header-stats>div{display:none}}
+@media(max-width:760px){.shell{padding-left:12px;padding-right:12px}.masthead{align-items:flex-start;flex-direction:column}.set-name{width:100%;font-size:34px}.header-stats{width:100%;justify-content:space-between}.workbench{grid-template-columns:1fr;min-height:0}.slot-column{display:grid;grid-template-columns:repeat(2,1fr)}.slot-column.right{display:grid}.doll-stage{order:-1;min-height:520px}.silhouette{width:42%}.inspector{grid-column:auto}.weapon-row{grid-template-columns:repeat(3,1fr)}.weapon-row .slot-copy{display:none}footer{align-items:flex-start;gap:12px;flex-direction:column}.two-up{grid-template-columns:1fr}}
+</style></head>
+<body><main class="shell">
+<div class="grain" aria-hidden="true"></div>
+<header class="masthead">
+  <div><div class="kicker">Private Realm Atelier</div><input class="set-name" id="set-name" value="Blessing of Willow Rose" aria-label="Set name"></div>
+  <div class="header-stats"><div><b id="stat-equipped">0</b><span>of 19 slots</span></div><div><b id="stat-nextid">135,000</b><span>next item ID</span></div><a class="home-link" href="/"><i></i>Back to signup</a></div>
+</header>
+<section class="workbench">
+  <aside class="slot-column left" id="col-left"></aside>
+  <section class="doll-stage" aria-label="Paper doll">
+    <div class="halo"></div>
+    <div class="sigil">WR</div>
+    <svg class="silhouette" viewBox="0 0 280 540" aria-hidden="true">
+      <defs><linearGradient id="body" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#e8e4dd" stop-opacity=".84"/><stop offset="1" stop-color="#9b9690" stop-opacity=".32"/></linearGradient></defs>
+      <circle cx="140" cy="74" r="46" fill="url(#body)"/>
+      <path d="M92 135 Q140 112 188 135 L222 280 L192 304 L184 486 L150 518 L140 348 L130 518 L96 486 L88 304 L58 280 Z" fill="url(#body)"/>
+      <path d="M88 155 L42 313 L68 326 L116 208 M192 155 L238 313 L212 326 L164 208" fill="none" stroke="url(#body)" stroke-width="28" stroke-linecap="round"/>
+    </svg>
+    <div class="doll-copy"><span>Gray-white priestly regalia</span><strong id="doll-line">Begin with the cloak</strong></div>
+    <div class="weapon-row" id="weapon-row"></div>
+  </section>
+  <aside class="slot-column right" id="col-right"></aside>
+  <aside class="inspector">
+    <div class="inspector-title"><span id="insp-short">BK</span><div><small>Editing slot</small><h2 id="insp-label">Back</h2></div></div>
+    <label>Custom item ID<input inputmode="numeric" id="f-id" placeholder="135000"></label>
+    <button class="lookup" id="btn-lookup" type="button">Look up item</button>
+    <label>Item name<input id="f-name" placeholder="Blessing of Willow Rose"></label>
+    <div class="two-up"><label>Quality<select id="f-quality"><option>Legendary</option><option selected>Epic</option><option>Rare</option><option>Uncommon</option><option>Common</option></select></label><label>Donor ID<input inputmode="numeric" id="f-donor" placeholder="Optional"></label></div>
+    <label>Design notes<textarea id="f-notes" placeholder="Appearance, scaling rule, source item…"></textarea></label>
+    <div class="inspector-actions"><button class="secondary" id="btn-clear" type="button">Clear slot</button><button id="btn-save" type="button">Save piece</button></div>
+  </aside>
+</section>
+<footer><div class="status"><i id="status-dot"></i><span id="status-text">Ready</span></div><div><button class="footer-btn" id="btn-export" type="button">Export set</button><button class="footer-btn danger" id="btn-reset" type="button">Reset</button></div></footer>
+</main>
+<script>
+'use strict';
+var SLOTS = [
+  {key:'head',label:'Head',short:'HD',side:'L'},{key:'neck',label:'Neck',short:'NK',side:'L'},
+  {key:'shoulders',label:'Shoulders',short:'SH',side:'L'},{key:'back',label:'Back',short:'BK',side:'L'},
+  {key:'chest',label:'Chest',short:'CH',side:'L'},{key:'shirt',label:'Shirt',short:'ST',side:'L'},
+  {key:'tabard',label:'Tabard',short:'TB',side:'L'},{key:'wrists',label:'Wrists',short:'WR',side:'L'},
+  {key:'hands',label:'Hands',short:'HN',side:'R'},{key:'waist',label:'Waist',short:'WA',side:'R'},
+  {key:'legs',label:'Legs',short:'LG',side:'R'},{key:'feet',label:'Feet',short:'FT',side:'R'},
+  {key:'finger1',label:'Finger One',short:'R1',side:'R'},{key:'finger2',label:'Finger Two',short:'R2',side:'R'},
+  {key:'trinket1',label:'Trinket One',short:'T1',side:'R'},{key:'trinket2',label:'Trinket Two',short:'T2',side:'R'},
+  {key:'mainhand',label:'Main Hand',short:'MH',side:'B'},{key:'offhand',label:'Off Hand',short:'OH',side:'B'},
+  {key:'ranged',label:'Ranged',short:'RG',side:'B'}
+];
+function blank(){ return {id:'',name:'',quality:'Epic',donor:'',notes:''}; }
+function emptyWardrobe(){ var w={}; for (var i=0;i<SLOTS.length;i++) w[SLOTS[i].key]=blank(); return w; }
+function loadGear(){ try { var g=JSON.parse(localStorage.getItem('willow-wardrobe-gear')||'null'); if (g && typeof g==='object') { for (var i=0;i<SLOTS.length;i++) if (!g[SLOTS[i].key]) g[SLOTS[i].key]=blank(); return g; } } catch(e){} return emptyWardrobe(); }
+var gear = loadGear();
+var setName = 'Blessing of Willow Rose';
+try { var saved=localStorage.getItem('willow-wardrobe-name'); if (saved) setName=saved; } catch(e){}
+var selected = 'back';
+var dbEverWorked = false;
+function $(id){ return document.getElementById(id); }
+function slotByKey(k){ for (var i=0;i<SLOTS.length;i++) if (SLOTS[i].key===k) return SLOTS[i]; return SLOTS[0]; }
+function fmt(n){ return Number(n).toLocaleString('en-US'); }
+function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function save(){ try { localStorage.setItem('willow-wardrobe-gear',JSON.stringify(gear)); localStorage.setItem('willow-wardrobe-name',setName); } catch(e){} }
+function status(msg){ $('status-text').textContent=msg; }
+function statusDot(color){ $('status-dot').style.background=color; $('status-dot').style.boxShadow='0 0 12px '+color; }
+function equippedCount(){ var n=0; for (var k in gear) if (gear[k].id && String(gear[k].id).trim()) n++; return n; }
+function nextId(){ var mx=134999; for (var k in gear) { var v=Number(gear[k].id); if (Number.isFinite(v) && v>mx) mx=v; } return mx+1; }
+function renderStats(){
+  var n=equippedCount();
+  $('stat-equipped').textContent=String(n);
+  $('stat-nextid').textContent=fmt(nextId());
+  $('doll-line').textContent = n ? n+' pieces assigned' : 'Begin with the cloak';
+}
+function slotHTML(s){
+  var it=gear[s.key], filled=!!(it.id && String(it.id).trim());
+  var cls='slot'+(s.key===selected?' active':'')+(filled?' filled':'')+(s.side==='B'?' compact':'');
+  var small = filled ? esc(it.name||'Unnamed item')+' · '+fmt(Number(it.id)) : 'Empty';
+  return '<button type="button" class="'+cls+'" data-key="'+s.key+'" title="'+esc(it.name||s.label)+'">'
+    +'<span class="slot-icon">'+s.short+'</span><span class="slot-copy"><b>'+esc(s.label)+'</b><small>'+small+'</small></span></button>';
+}
+function renderBoard(){
+  var L='',R='',B='';
+  for (var i=0;i<SLOTS.length;i++){ var s=SLOTS[i], h=slotHTML(s);
+    if (s.side==='L') L+=h; else if (s.side==='R') R+=h; else B+=h; }
+  $('col-left').innerHTML=L; $('col-right').innerHTML=R; $('weapon-row').innerHTML=B;
+}
+function renderInspector(){
+  var s=slotByKey(selected), it=gear[selected];
+  $('insp-short').textContent=s.short; $('insp-label').textContent=s.label;
+  $('f-id').value=it.id; $('f-name').value=it.name; $('f-quality').value=it.quality;
+  $('f-donor').value=it.donor; $('f-notes').value=it.notes;
+  $('f-id').placeholder=String(nextId());
+}
+function renderAll(){ renderBoard(); renderInspector(); renderStats(); }
+function patch(change){ var it=gear[selected]; for (var k in change) it[k]=change[k]; save(); }
+function choose(key){ selected=key; status(slotByKey(key).label+' selected'); renderAll(); }
+document.addEventListener('click',function(ev){
+  var b=ev.target.closest ? ev.target.closest('button.slot') : null;
+  if (b && b.dataset && b.dataset.key) choose(b.dataset.key);
+});
+$('set-name').addEventListener('input',function(){ setName=this.value; save(); });
+$('f-id').addEventListener('input',function(){ this.value=this.value.replace(/\\D/g,''); patch({id:this.value}); renderBoard(); renderStats(); });
+$('f-name').addEventListener('input',function(){ patch({name:this.value}); renderBoard(); });
+$('f-quality').addEventListener('change',function(){ patch({quality:this.value}); });
+$('f-donor').addEventListener('input',function(){ this.value=this.value.replace(/\\D/g,''); patch({donor:this.value}); });
+$('f-notes').addEventListener('input',function(){ patch({notes:this.value}); });
+$('btn-lookup').addEventListener('click',function(){
+  var it=gear[selected];
+  if (!it.id || !String(it.id).trim()){ status('Enter an item ID first'); return; }
+  statusDot('#c9a65e'); status('Looking up item '+it.id+'…');
+  var xhr=new XMLHttpRequest();
+  xhr.open('GET','/wardrobe-item?id='+encodeURIComponent(it.id),true);
+  xhr.onload=function(){
+    if (xhr.status===200){
+      var data=null; try { data=JSON.parse(xhr.responseText); } catch(e){}
+      if (data && data.found){
+        dbEverWorked=true;
+        patch({name:data.name||it.name,quality:data.quality||it.quality,donor:it.donor||String(data.displayId||'')});
+        statusDot('#7eaa82'); status('Loaded "'+(data.name||'item')+'" from the realm database');
+      } else {
+        statusDot('#8d4e46'); status('Item '+it.id+' is not in the realm database yet. You can still name it manually.');
+      }
+    } else {
+      statusDot('#8d4e46'); status('Realm database lookup failed ('+xhr.status+'). You can still name the item manually.');
+    }
+    renderAll();
+  };
+  xhr.onerror=function(){ statusDot('#8d4e46'); status('Realm database is not reachable right now. You can still name the item manually.'); renderAll(); };
+  xhr.send();
+});
+$('btn-clear').addEventListener('click',function(){ var s=slotByKey(selected); gear[selected]=blank(); save(); status(s.label+' cleared'); renderAll(); });
+$('btn-save').addEventListener('click',function(){ save(); var s=slotByKey(selected); status(s.label+' saved'); renderAll(); });
+$('btn-reset').addEventListener('click',function(){ if (!window.confirm('Clear every slot in this wardrobe set?')) return; gear=emptyWardrobe(); save(); status('Wardrobe cleared'); renderAll(); });
+$('btn-export').addEventListener('click',function(){
+  var payload=JSON.stringify({setName:setName,gear:gear},null,2);
+  var blob=new Blob([payload],{type:'application/json'});
+  var a=document.createElement('a'); a.href=URL.createObjectURL(blob);
+  a.download=setName.replace(/[^a-z0-9]+/gi,'_')+'.json';
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  setTimeout(function(){ URL.revokeObjectURL(a.href); },1000);
+  status('Set exported');
+});
+renderAll(); statusDot(dbEverWorked?'#7eaa82':'#b79a5c'); status('Ready');
+</script></body></html>`;
+}
+
+// ---------------------------------------------------------------------------
 // DB layer. The ONLY place that talks to MySQL.
 //
 // It probes the real table on boot rather than trusting the base schema. That
@@ -969,7 +1184,57 @@ const DB = (() => {
     }
   }
 
-  return { preflight, insertAccount, accountForRecovery, updatePassword, get columns() { return cols; } };
+  // -------------------------------------------------------------------------
+  // Wardrobe lookup — READ-ONLY. The Willow Rose Wardrobe page wants the real
+  // name/quality of a custom item (entry >= 135000) without anyone touching a
+  // DB client. The world database's name is not fixed across repacks, so we
+  // discover it once via information_schema (any schema holding item_template
+  // that is not the auth DB), then read one row by entry. Never writes.
+  // -------------------------------------------------------------------------
+  let worldSchemas = null;
+  const SCHEMA_RE = /^[A-Za-z0-9_]+$/;
+  const QUALITY_NAMES = { 0: 'Poor', 1: 'Common', 2: 'Uncommon', 3: 'Rare', 4: 'Epic', 5: 'Legendary', 6: 'Artifact', 7: 'Heirloom' };
+
+  async function wardrobeSchemas() {
+    if (worldSchemas) return worldSchemas;
+    const r = await conn.query(
+      "SELECT TABLE_SCHEMA FROM information_schema.TABLES WHERE TABLE_NAME = 'item_template'"
+    );
+    worldSchemas = r.rows.map((row) => row[0]).filter((s) => SCHEMA_RE.test(s) && s !== CFG.dbName);
+    return worldSchemas;
+  }
+
+  async function wardrobeItem(entryRaw) {
+    const entry = Number(entryRaw);
+    if (!Number.isInteger(entry) || entry <= 0) return null;
+    const schemas = await wardrobeSchemas();
+    for (const s of schemas) {
+      try {
+        const r = await conn.query(
+          "SELECT entry, name, Quality, displayid, class, inventorytype FROM `" + s +
+          "`.item_template WHERE entry = " + entry + " LIMIT 1"
+        );
+        if (!r.rows.length) continue;
+        const row = r.rows[0];
+        return {
+          found: true,
+          id: Number(row[0]),
+          name: String(row[1] || ''),
+          quality: QUALITY_NAMES[Number(row[2])] || 'Common',
+          displayId: Number(row[3]) || 0,
+          itemClass: Number(row[4]) || 0,
+          inventoryType: Number(row[5]) || 0,
+          schema: s,
+        };
+      } catch (e) {
+        // A schema we can't read (privileges) is not fatal — try the next one.
+        continue;
+      }
+    }
+    return { found: false };
+  }
+
+  return { preflight, insertAccount, accountForRecovery, updatePassword, wardrobeItem, get columns() { return cols; } };
 })();
 
 // ---------------------------------------------------------------------------
@@ -1020,6 +1285,24 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'GET' && url.pathname === '/health') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ ok: true })); return;
+  }
+
+  if (req.method === 'GET' && url.pathname === '/wardrobe') {
+    const r = page(renderWardrobe());
+    res.writeHead(r.status, r.headers); res.end(r.body); return;
+  }
+
+  if (req.method === 'GET' && url.pathname === '/wardrobe-item') {
+    res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+    try {
+      const result = await DB.wardrobeItem(url.searchParams.get('id'));
+      res.end(JSON.stringify(result || { found: false }));
+    } catch (e) {
+      // Lookup is a nicety, never a crash. The page falls back to manual entry.
+      res.writeHead(503, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ found: false, error: 'database unavailable' }));
+    }
+    return;
   }
 
   if (req.method === 'GET' && url.pathname === '/realm-status') {
@@ -1169,4 +1452,4 @@ if (require.main === module) {
   })();
 }
 
-module.exports = { shaPassHash, normalize, validate, validateNewPassword, ResetTokenStore, RealmStatusMonitor, renderForm, MAX_USERNAME, resolveExpansion, EXPANSION_DEFAULT };
+module.exports = { shaPassHash, normalize, validate, validateNewPassword, ResetTokenStore, RealmStatusMonitor, renderForm, renderWardrobe, MAX_USERNAME, resolveExpansion, EXPANSION_DEFAULT };
