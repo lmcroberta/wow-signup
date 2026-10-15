@@ -1,5 +1,11 @@
 # WoW Signup and Willa Rose Wardrobe changelog
 
+## 1.2.2 — 2026-10-15
+
+- Fixed the quartermaster bridge on repacks where the signup account can read `world.creature` but cannot see its columns through `information_schema.COLUMNS`.
+- The bridge now discovers the creature entry column from a zero-row query against the spawn table itself, without reading or changing any spawn data.
+- Added regression coverage for both `id` and `id1` creature-entry column layouts.
+
 ## 1.2.1 — 2026-10-15
 
 - Fixed the quartermaster inspection route so a database error is returned as JSON instead of sending headers too early and collapsing into a Cloudflare 502.

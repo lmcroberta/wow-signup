@@ -17,7 +17,8 @@ const path = require('node:path');
 const {
   shaPassHash, normalize, validate, validateNewPassword, ResetTokenStore,
   RealmStatusMonitor, renderForm, renderWardrobe, wardrobeSlotsForInventoryType,
-  WARDROBE_VERSION, MAX_USERNAME, resolveExpansion, bridgeAuthorized, QUARTERMASTER,
+  WARDROBE_VERSION, MAX_USERNAME, resolveExpansion, bridgeAuthorized,
+  resolveCreatureSpawnIdColumn, QUARTERMASTER,
 } = require('./server.js');
 
 let pass = 0;
@@ -262,8 +263,8 @@ check('the value handed to the INSERT is always a positive integer', () => {
 // ---------------------------------------------------------------------------
 check('wardrobe version is visible and named in the rendered page', () => {
   const html = renderWardrobe();
-  assert.strictEqual(WARDROBE_VERSION, '1.2.1');
-  assert.match(html, /v1\.2\.1/);
+  assert.strictEqual(WARDROBE_VERSION, '1.2.2');
+  assert.match(html, /v1\.2\.2/);
   assert.match(html, /Blessings of Willa Rose/);
 });
 
@@ -321,6 +322,19 @@ check('world bridge awaits its snapshot before sending 200 headers', () => {
 check('world bridge has no baked-in token hash fallback', () => {
   const source = fs.readFileSync(path.join(__dirname, 'server.js'), 'utf8');
   assert.match(source, /process\.env\.WORLD_BRIDGE_TOKEN_SHA256 \|\| ''/);
+});
+
+check('creature spawn column is detected from the table field definitions', () => {
+  assert.strictEqual(resolveCreatureSpawnIdColumn(['guid', 'id1', 'map']), 'id1');
+  assert.strictEqual(resolveCreatureSpawnIdColumn(['guid', 'id', 'map']), 'id');
+  assert.strictEqual(resolveCreatureSpawnIdColumn(['GUID', 'ID1', 'map']), 'ID1');
+  assert.throws(() => resolveCreatureSpawnIdColumn(['guid', 'entry', 'map']), /neither id nor id1/);
+});
+
+check('world bridge probes creature directly instead of relying on information_schema visibility', () => {
+  const source = fs.readFileSync(path.join(__dirname, 'server.js'), 'utf8');
+  assert.match(source, /SELECT \* FROM \\`\$\{schema\}\\`\.creature LIMIT 0/);
+  assert.doesNotMatch(source, /TABLE_NAME = 'creature'[\s\S]{0,120}COLUMN_NAME IN \('id', 'id1'\)/);
 });
 
 // ---------------------------------------------------------------------------

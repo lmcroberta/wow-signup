@@ -874,8 +874,8 @@ function renderDone(username) {
 
 // Wardrobe release metadata. The version is visible on the page and every
 // release is recorded in CHANGELOG.md so the running image can be identified.
-const WARDROBE_VERSION = '1.2.1';
-const WARDROBE_RELEASE_NOTE = 'Hardened the quartermaster bridge error path and removed its embedded token-hash fallback.';
+const WARDROBE_VERSION = '1.2.2';
+const WARDROBE_RELEASE_NOTE = 'Fixed quartermaster spawn-column detection for this realm repack.';
 
 // WoW InventoryType -> wardrobe slot candidates. Rings and trinkets have two
 // legal destinations. Unknown and non-equippable types are rejected.
@@ -1306,15 +1306,12 @@ const DB = (() => {
   }
 
   async function creatureSpawnIdColumn(schema) {
-    const r = await conn.query(
-      `SELECT COLUMN_NAME FROM information_schema.COLUMNS
-       WHERE TABLE_SCHEMA = ${q(schema)} AND TABLE_NAME = 'creature'
-         AND COLUMN_NAME IN ('id', 'id1')`
-    );
-    const names = r.rows.map((row) => String(row[0]));
-    if (names.includes('id')) return 'id';
-    if (names.includes('id1')) return 'id1';
-    throw new Error('The creature spawn table has neither id nor id1.');
+    // This repack lets the signup user SELECT from world.creature but does not
+    // expose its columns through information_schema.COLUMNS. Ask the table
+    // itself for a zero-row result instead; the MySQL field definitions still
+    // contain every column name without reading any creature data.
+    const r = await conn.query(`SELECT * FROM \`${schema}\`.creature LIMIT 0`);
+    return resolveCreatureSpawnIdColumn(r.fields);
   }
 
   async function quartermasterSnapshot() {
@@ -1412,6 +1409,13 @@ function bridgeAuthorized(headerValue, expectedHash = CFG.worldBridgeTokenSha256
 
 function resultObjects(result) {
   return result.rows.map((row) => Object.fromEntries(result.fields.map((name, i) => [name, row[i]])));
+}
+
+function resolveCreatureSpawnIdColumn(fields) {
+  const names = fields.map((name) => String(name).toLowerCase());
+  if (names.includes('id')) return fields[names.indexOf('id')];
+  if (names.includes('id1')) return fields[names.indexOf('id1')];
+  throw new Error('The creature spawn table has neither id nor id1.');
 }
 
 // ---------------------------------------------------------------------------
@@ -1658,4 +1662,4 @@ if (require.main === module) {
   })();
 }
 
-module.exports = { shaPassHash, normalize, validate, validateNewPassword, ResetTokenStore, RealmStatusMonitor, renderForm, renderWardrobe, wardrobeSlotsForInventoryType, WARDROBE_VERSION, MAX_USERNAME, resolveExpansion, EXPANSION_DEFAULT, bridgeAuthorized, resultObjects, QUARTERMASTER };
+module.exports = { shaPassHash, normalize, validate, validateNewPassword, ResetTokenStore, RealmStatusMonitor, renderForm, renderWardrobe, wardrobeSlotsForInventoryType, WARDROBE_VERSION, MAX_USERNAME, resolveExpansion, EXPANSION_DEFAULT, bridgeAuthorized, resultObjects, resolveCreatureSpawnIdColumn, QUARTERMASTER };
