@@ -15,7 +15,7 @@ const assert = require('node:assert');
 const {
   shaPassHash, normalize, validate, validateNewPassword, ResetTokenStore,
   RealmStatusMonitor, renderForm, renderWardrobe, wardrobeSlotsForInventoryType,
-  WARDROBE_VERSION, MAX_USERNAME, resolveExpansion,
+  WARDROBE_VERSION, MAX_USERNAME, resolveExpansion, bridgeAuthorized, QUARTERMASTER,
 } = require('./server.js');
 
 let pass = 0;
@@ -260,8 +260,8 @@ check('the value handed to the INSERT is always a positive integer', () => {
 // ---------------------------------------------------------------------------
 check('wardrobe version is visible and named in the rendered page', () => {
   const html = renderWardrobe();
-  assert.strictEqual(WARDROBE_VERSION, '1.1.0');
-  assert.match(html, /v1\.1\.0/);
+  assert.strictEqual(WARDROBE_VERSION, '1.2.0');
+  assert.match(html, /v1\.2\.0/);
   assert.match(html, /Blessings of Willa Rose/);
 });
 
@@ -288,6 +288,26 @@ check('lookup handler checks inventory type before placing an item', () => {
   const html = renderWardrobe();
   assert.match(html, /targetSlotForInventoryType\(data\.inventoryType,source\)/);
   assert.match(html, /Nothing was overwritten/);
+});
+
+// ---------------------------------------------------------------------------
+// 9. Scoped world-database bridge authentication and fixed targets.
+// ---------------------------------------------------------------------------
+check('world bridge rejects missing and incorrect bearer tokens', () => {
+  const token = 'bridge-test-token';
+  const expected = crypto.createHash('sha256').update(token).digest('hex');
+  assert.strictEqual(bridgeAuthorized('', expected), false);
+  assert.strictEqual(bridgeAuthorized('Bearer wrong', expected), false);
+});
+
+check('world bridge accepts the correct bearer token', () => {
+  const token = 'bridge-test-token';
+  const expected = crypto.createHash('sha256').update(token).digest('hex');
+  assert.strictEqual(bridgeAuthorized('Bearer ' + token, expected), true);
+});
+
+check('world bridge is hard-scoped to the custom quartermaster, donor, and tabard', () => {
+  assert.deepStrictEqual(QUARTERMASTER, { customEntry: 9100002, donorEntry: 59908, tabardEntry: 135000 });
 });
 
 // ---------------------------------------------------------------------------

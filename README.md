@@ -1,6 +1,6 @@
 # WoW self-serve registration page and Willa Rose Wardrobe
 
-**Current wardrobe version: 1.1.0.** Release history is recorded in `CHANGELOG.md`.
+**Current wardrobe version: 1.2.0.** Release history is recorded in `CHANGELOG.md`.
 
 Written Oct 1, 2026 for Robert's EmuCoach TrinityCore 5.4.8 (MoP) realm, because Tyler
 wants people to be able to sign up without an admin creating accounts by hand.
@@ -104,12 +104,18 @@ Environment variables:
 | `REALM_STATUS_TIMEOUT_MS` | `1200` | Timeout for each TCP check |
 | `REALM_STATUS_POLL_MS` | `5000` | Server-side check interval |
 | `REALM_STARTING_WINDOW_MS` | `600000` | Maximum Starting up window after AuthServer appears |
+| `WORLD_BRIDGE_TOKEN_SHA256` | built-in deployment hash | Optional override for the authenticated, fixed-operation world bridge; never set this to the plaintext token |
 
 ```bash
 node selftest.js      # prove the hash is right, no DB needed
 node check-db.js      # prove it can reach the DB
 node server.js        # run it
 ```
+
+
+## Scoped world-database bridge
+
+Version 1.2.0 adds an authenticated internal endpoint for the BuckmanHoldings quartermaster repair. It is deliberately not a SQL console: callers can only inspect the fixed donor/custom entries or perform the fixed hard reset of custom creature 9100002 from donor 59908 and restore tabard 135000. The endpoint returns 404 without the correct bearer token, stores only its SHA-256 hash, and never accepts caller-supplied SQL, table names, entry IDs, or column names. The MySQL account still determines the final privilege boundary.
 
 ## Known limitations — stated plainly, not buried
 

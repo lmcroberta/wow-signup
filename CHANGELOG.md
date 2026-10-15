@@ -1,5 +1,13 @@
 # WoW Signup and Willa Rose Wardrobe changelog
 
+## 1.2.0 — 2026-10-15
+
+- Added an authenticated, fixed-operation bridge for inspecting the BuckmanHoldings quartermaster donor, custom template, spawn rows, and vendor stock.
+- Added a transaction-protected hard reset that deletes every spawn of creature 9,100,002, replaces only that custom template with a clean clone of visible donor 59,908, and restores tabard 135,000 to its vendor stock.
+- The bridge is not an arbitrary SQL endpoint: table names, IDs, columns, and statements are fixed in code.
+- Added bearer-token authentication using a stored SHA-256 hash and constant-time comparison.
+- Added automated coverage for bridge authentication and fixed target IDs.
+
 ## 1.1.0 — 2026-10-15
 
 - Fixed the wardrobe item-slot routing oops: realm lookups now use WoW `InventoryType` and can only enter compatible slots.

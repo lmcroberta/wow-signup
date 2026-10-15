@@ -432,6 +432,9 @@ const CFG = {
   realmStatusTimeoutMs: parseInt(process.env.REALM_STATUS_TIMEOUT_MS || '1200', 10),
   realmStatusPollMs: parseInt(process.env.REALM_STATUS_POLL_MS || '5000', 10),
   realmStartingWindowMs: parseInt(process.env.REALM_STARTING_WINDOW_MS || '600000', 10),
+  // Disabled unless a SHA-256 hash is supplied. The plaintext bridge token is
+  // never stored in this image or database.
+  worldBridgeTokenSha256: (process.env.WORLD_BRIDGE_TOKEN_SHA256 || 'aff297b0e3f44d2d40a999405b725f96285d7ba0fec1e18f671a1ae89c46853f').trim().toLowerCase(),
 };
 
 // ---------------------------------------------------------------------------
@@ -871,8 +874,8 @@ function renderDone(username) {
 
 // Wardrobe release metadata. The version is visible on the page and every
 // release is recorded in CHANGELOG.md so the running image can be identified.
-const WARDROBE_VERSION = '1.1.0';
-const WARDROBE_RELEASE_NOTE = 'Realm items now route only to compatible equipment slots.';
+const WARDROBE_VERSION = '1.2.0';
+const WARDROBE_RELEASE_NOTE = 'Added the authenticated world-database bridge for scoped quartermaster inspection and repair.';
 
 // WoW InventoryType -> wardrobe slot candidates. Rings and trinkets have two
 // legal destinations. Unknown and non-equippable types are rejected.
@@ -1296,8 +1299,120 @@ const DB = (() => {
     return { found: false };
   }
 
-  return { preflight, insertAccount, accountForRecovery, updatePassword, wardrobeItem, get columns() { return cols; } };
+  async function worldSchema() {
+    const schemas = await wardrobeSchemas();
+    if (!schemas.length) throw new Error('No readable world schema was found.');
+    return schemas.includes('world') ? 'world' : schemas[0];
+  }
+
+  async function creatureSpawnIdColumn(schema) {
+    const r = await conn.query(
+      `SELECT COLUMN_NAME FROM information_schema.COLUMNS
+       WHERE TABLE_SCHEMA = ${q(schema)} AND TABLE_NAME = 'creature'
+         AND COLUMN_NAME IN ('id', 'id1')`
+    );
+    const names = r.rows.map((row) => String(row[0]));
+    if (names.includes('id')) return 'id';
+    if (names.includes('id1')) return 'id1';
+    throw new Error('The creature spawn table has neither id nor id1.');
+  }
+
+  async function quartermasterSnapshot() {
+    const schema = await worldSchema();
+    const spawnId = await creatureSpawnIdColumn(schema);
+    const templates = await conn.query(
+      `SELECT * FROM \`${schema}\`.creature_template
+       WHERE entry IN (${QUARTERMASTER.donorEntry}, ${QUARTERMASTER.customEntry}) ORDER BY entry`
+    );
+    const spawns = await conn.query(
+      `SELECT * FROM \`${schema}\`.creature WHERE \`${spawnId}\` = ${QUARTERMASTER.customEntry} ORDER BY guid`
+    );
+    const stock = await conn.query(
+      `SELECT * FROM \`${schema}\`.npc_vendor WHERE entry = ${QUARTERMASTER.customEntry} ORDER BY slot, item`
+    );
+    return {
+      schema,
+      spawnIdColumn: spawnId,
+      templates: resultObjects(templates),
+      spawns: resultObjects(spawns),
+      stock: resultObjects(stock),
+    };
+  }
+
+  async function resetQuartermaster() {
+    const schema = await worldSchema();
+    const spawnId = await creatureSpawnIdColumn(schema);
+    const donor = await conn.query(
+      `SELECT entry FROM \`${schema}\`.creature_template WHERE entry = ${QUARTERMASTER.donorEntry} LIMIT 1`
+    );
+    if (!donor.rows.length) throw new Error('Visible donor creature 59908 does not exist.');
+
+    await conn.query('START TRANSACTION');
+    try {
+      const removedSpawns = await conn.query(
+        `DELETE FROM \`${schema}\`.creature WHERE \`${spawnId}\` = ${QUARTERMASTER.customEntry}`
+      );
+      await conn.query(`DELETE FROM \`${schema}\`.npc_vendor WHERE entry = ${QUARTERMASTER.customEntry}`);
+      await conn.query(`DROP TEMPORARY TABLE IF EXISTS tmp_world_bridge_quartermaster`);
+      await conn.query(`CREATE TEMPORARY TABLE tmp_world_bridge_quartermaster LIKE \`${schema}\`.creature_template`);
+      await conn.query(
+        `INSERT INTO tmp_world_bridge_quartermaster
+         SELECT * FROM \`${schema}\`.creature_template WHERE entry = ${QUARTERMASTER.donorEntry}`
+      );
+      await conn.query(
+        `UPDATE tmp_world_bridge_quartermaster
+         SET entry = ${QUARTERMASTER.customEntry},
+             name = 'BuckmanHoldings Quartermaster',
+             subname = 'Guild Quartermaster'
+         WHERE entry = ${QUARTERMASTER.donorEntry}`
+      );
+      await conn.query(`DELETE FROM \`${schema}\`.creature_template WHERE entry = ${QUARTERMASTER.customEntry}`);
+      await conn.query(
+        `INSERT INTO \`${schema}\`.creature_template
+         SELECT * FROM tmp_world_bridge_quartermaster WHERE entry = ${QUARTERMASTER.customEntry}`
+      );
+      await conn.query(`DROP TEMPORARY TABLE IF EXISTS tmp_world_bridge_quartermaster`);
+      await conn.query(
+        `INSERT INTO \`${schema}\`.npc_vendor
+           (entry, slot, item, maxcount, incrtime, ExtendedCost, type)
+         VALUES (${QUARTERMASTER.customEntry}, 0, ${QUARTERMASTER.tabardEntry}, 0, 0, 0, 1)`
+      );
+      await conn.query('COMMIT');
+      return { ok: true, removedSpawns: removedSpawns.affectedRows, snapshot: await quartermasterSnapshot() };
+    } catch (e) {
+      try { await conn.query('ROLLBACK'); } catch {}
+      throw e;
+    }
+  }
+
+  return {
+    preflight, insertAccount, accountForRecovery, updatePassword, wardrobeItem,
+    quartermasterSnapshot, resetQuartermaster,
+    get columns() { return cols; },
+  };
 })();
+
+// ---------------------------------------------------------------------------
+// Scoped world-database bridge.
+//
+// This deliberately is NOT a SQL console. It exposes two fixed operations:
+//   1. inspect the quartermaster, donor, spawns, and vendor stock;
+//   2. hard-reset custom entry 9100002 from visible donor 59908.
+// No caller-controlled table, column, or SQL fragment ever reaches MySQL.
+// ---------------------------------------------------------------------------
+const QUARTERMASTER = Object.freeze({ customEntry: 9100002, donorEntry: 59908, tabardEntry: 135000 });
+
+function bridgeAuthorized(headerValue, expectedHash = CFG.worldBridgeTokenSha256) {
+  if (!/^[0-9a-f]{64}$/.test(expectedHash)) return false;
+  const match = /^Bearer\s+(.+)$/i.exec(String(headerValue || ''));
+  if (!match) return false;
+  const actualHash = crypto.createHash('sha256').update(match[1], 'utf8').digest('hex');
+  return crypto.timingSafeEqual(Buffer.from(actualHash, 'hex'), Buffer.from(expectedHash, 'hex'));
+}
+
+function resultObjects(result) {
+  return result.rows.map((row) => Object.fromEntries(result.fields.map((name, i) => [name, row[i]])));
+}
 
 // ---------------------------------------------------------------------------
 // Account creation — thin wrapper so the HTTP layer stays readable.
@@ -1365,6 +1480,34 @@ const server = http.createServer(async (req, res) => {
       res.end(JSON.stringify({ found: false, error: 'database unavailable' }));
     }
     return;
+  }
+
+  if (url.pathname === '/internal/world-quartermaster') {
+    res.setHeader('Content-Type', 'application/json');
+    res.setHeader('Cache-Control', 'no-store');
+    if (!bridgeAuthorized(req.headers.authorization)) {
+      res.writeHead(404); res.end(JSON.stringify({ error: 'Not found' })); return;
+    }
+    try {
+      if (req.method === 'GET') {
+        res.writeHead(200); res.end(JSON.stringify(await DB.quartermasterSnapshot())); return;
+      }
+      if (req.method === 'POST') {
+        let payload;
+        try { payload = JSON.parse(await readBody(req, 1024)); }
+        catch { res.writeHead(400); res.end(JSON.stringify({ error: 'Invalid JSON' })); return; }
+        if (!payload || payload.action !== 'hard-reset-9100002-from-59908') {
+          res.writeHead(400); res.end(JSON.stringify({ error: 'Unsupported action' })); return;
+        }
+        const result = await DB.resetQuartermaster();
+        console.log(`[world-bridge] hard-reset creature ${QUARTERMASTER.customEntry} from donor ${QUARTERMASTER.donorEntry}; removed ${result.removedSpawns} spawn(s)`);
+        res.writeHead(200); res.end(JSON.stringify(result)); return;
+      }
+      res.writeHead(405, { Allow: 'GET, POST' }); res.end(JSON.stringify({ error: 'Method not allowed' })); return;
+    } catch (e) {
+      console.error('[world-bridge] operation failed:', e.message);
+      res.writeHead(503); res.end(JSON.stringify({ error: 'World database operation failed', detail: e.message })); return;
+    }
   }
 
   if (req.method === 'GET' && url.pathname === '/realm-status') {
@@ -1514,4 +1657,4 @@ if (require.main === module) {
   })();
 }
 
-module.exports = { shaPassHash, normalize, validate, validateNewPassword, ResetTokenStore, RealmStatusMonitor, renderForm, renderWardrobe, wardrobeSlotsForInventoryType, WARDROBE_VERSION, MAX_USERNAME, resolveExpansion, EXPANSION_DEFAULT };
+module.exports = { shaPassHash, normalize, validate, validateNewPassword, ResetTokenStore, RealmStatusMonitor, renderForm, renderWardrobe, wardrobeSlotsForInventoryType, WARDROBE_VERSION, MAX_USERNAME, resolveExpansion, EXPANSION_DEFAULT, bridgeAuthorized, resultObjects, QUARTERMASTER };
