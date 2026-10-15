@@ -434,7 +434,7 @@ const CFG = {
   realmStartingWindowMs: parseInt(process.env.REALM_STARTING_WINDOW_MS || '600000', 10),
   // Disabled unless a SHA-256 hash is supplied. The plaintext bridge token is
   // never stored in this image or database.
-  worldBridgeTokenSha256: (process.env.WORLD_BRIDGE_TOKEN_SHA256 || 'aff297b0e3f44d2d40a999405b725f96285d7ba0fec1e18f671a1ae89c46853f').trim().toLowerCase(),
+  worldBridgeTokenSha256: (process.env.WORLD_BRIDGE_TOKEN_SHA256 || '').trim().toLowerCase(),
 };
 
 // ---------------------------------------------------------------------------
@@ -874,8 +874,8 @@ function renderDone(username) {
 
 // Wardrobe release metadata. The version is visible on the page and every
 // release is recorded in CHANGELOG.md so the running image can be identified.
-const WARDROBE_VERSION = '1.2.0';
-const WARDROBE_RELEASE_NOTE = 'Added the authenticated world-database bridge for scoped quartermaster inspection and repair.';
+const WARDROBE_VERSION = '1.2.1';
+const WARDROBE_RELEASE_NOTE = 'Hardened the quartermaster bridge error path and removed its embedded token-hash fallback.';
 
 // WoW InventoryType -> wardrobe slot candidates. Rings and trinkets have two
 // legal destinations. Unknown and non-equippable types are rejected.
@@ -1490,7 +1490,8 @@ const server = http.createServer(async (req, res) => {
     }
     try {
       if (req.method === 'GET') {
-        res.writeHead(200); res.end(JSON.stringify(await DB.quartermasterSnapshot())); return;
+        const snapshot = await DB.quartermasterSnapshot();
+        res.writeHead(200); res.end(JSON.stringify(snapshot)); return;
       }
       if (req.method === 'POST') {
         let payload;

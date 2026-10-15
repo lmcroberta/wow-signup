@@ -1,5 +1,10 @@
 # WoW Signup and Willa Rose Wardrobe changelog
 
+## 1.2.1 — 2026-10-15
+
+- Fixed the quartermaster inspection route so a database error is returned as JSON instead of sending headers too early and collapsing into a Cloudflare 502.
+- Removed the baked-in bridge-token hash fallback; the bridge is now disabled unless `WORLD_BRIDGE_TOKEN_SHA256` is explicitly configured.
+
 ## 1.2.0 — 2026-10-15
 
 - Added an authenticated, fixed-operation bridge for inspecting the BuckmanHoldings quartermaster donor, custom template, spawn rows, and vendor stock.

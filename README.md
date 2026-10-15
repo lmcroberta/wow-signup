@@ -1,6 +1,6 @@
 # WoW self-serve registration page and Willa Rose Wardrobe
 
-**Current wardrobe version: 1.2.0.** Release history is recorded in `CHANGELOG.md`.
+**Current wardrobe version: 1.2.1.** Release history is recorded in `CHANGELOG.md`.
 
 Written Oct 1, 2026 for Robert's EmuCoach TrinityCore 5.4.8 (MoP) realm, because Tyler
 wants people to be able to sign up without an admin creating accounts by hand.
@@ -104,7 +104,7 @@ Environment variables:
 | `REALM_STATUS_TIMEOUT_MS` | `1200` | Timeout for each TCP check |
 | `REALM_STATUS_POLL_MS` | `5000` | Server-side check interval |
 | `REALM_STARTING_WINDOW_MS` | `600000` | Maximum Starting up window after AuthServer appears |
-| `WORLD_BRIDGE_TOKEN_SHA256` | built-in deployment hash | Optional override for the authenticated, fixed-operation world bridge; never set this to the plaintext token |
+| `WORLD_BRIDGE_TOKEN_SHA256` | unset | Required to enable the authenticated, fixed-operation world bridge; set only the SHA-256 hash, never the plaintext token |
 
 ```bash
 node selftest.js      # prove the hash is right, no DB needed

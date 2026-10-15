@@ -12,6 +12,8 @@
 'use strict';
 
 const assert = require('node:assert');
+const fs = require('node:fs');
+const path = require('node:path');
 const {
   shaPassHash, normalize, validate, validateNewPassword, ResetTokenStore,
   RealmStatusMonitor, renderForm, renderWardrobe, wardrobeSlotsForInventoryType,
@@ -260,8 +262,8 @@ check('the value handed to the INSERT is always a positive integer', () => {
 // ---------------------------------------------------------------------------
 check('wardrobe version is visible and named in the rendered page', () => {
   const html = renderWardrobe();
-  assert.strictEqual(WARDROBE_VERSION, '1.2.0');
-  assert.match(html, /v1\.2\.0/);
+  assert.strictEqual(WARDROBE_VERSION, '1.2.1');
+  assert.match(html, /v1\.2\.1/);
   assert.match(html, /Blessings of Willa Rose/);
 });
 
@@ -308,6 +310,17 @@ check('world bridge accepts the correct bearer token', () => {
 
 check('world bridge is hard-scoped to the custom quartermaster, donor, and tabard', () => {
   assert.deepStrictEqual(QUARTERMASTER, { customEntry: 9100002, donorEntry: 59908, tabardEntry: 135000 });
+});
+
+check('world bridge awaits its snapshot before sending 200 headers', () => {
+  const source = fs.readFileSync(path.join(__dirname, 'server.js'), 'utf8');
+  assert.match(source, /const snapshot = await DB\.quartermasterSnapshot\(\);\s*res\.writeHead\(200\)/);
+  assert.doesNotMatch(source, /res\.writeHead\(200\);\s*res\.end\(JSON\.stringify\(await DB\.quartermasterSnapshot\(\)\)\)/);
+});
+
+check('world bridge has no baked-in token hash fallback', () => {
+  const source = fs.readFileSync(path.join(__dirname, 'server.js'), 'utf8');
+  assert.match(source, /process\.env\.WORLD_BRIDGE_TOKEN_SHA256 \|\| ''/);
 });
 
 // ---------------------------------------------------------------------------
